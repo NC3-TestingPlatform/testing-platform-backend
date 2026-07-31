@@ -1,6 +1,6 @@
 """
-Export the generated OpenAPI document to `docs/openapi.json`.
-Run: `uv run python -m app.tools.export_openapi`
+Export the generated OpenAPI document to `api/openapi.json`.
+Run: `uv run python -m app.tools.export_openapi` or `make export-openapi`
 """
 
 import json
