@@ -40,14 +40,14 @@ Handlers return static stub data, so the running server doubles as a mock the fr
 
 # Generating the OpenAPI contract
 
-The OpenAPI 3.1 spec is generated from the FastAPI app (`app.main:app`) and written to `docs/openapi.json`.
+The OpenAPI 3.1 spec is generated from the FastAPI app (`app.main:app`) and written to `api/openapi.json`.
 
 ```bash
-uv run python -m app.tools.export_openapi                  # write docs/openapi.json
-uv run openapi-spec-validator --schema 3.1 docs/openapi.json   # validate (exits 0 if valid)
+uv run python -m app.tools.export_openapi                 # write api/openapi.json
+uv run openapi-spec-validator --schema 3.1 api/openapi.json   # validate (exits 0 if valid)
 ```
 
-Regenerate and re-validate after any change to a router or Pydantic schema. `docs/openapi.json` is the contract the
+Regenerate and re-validate after any change to a router or Pydantic schema. `api/openapi.json` is the contract the
 frontend interfaces with; commit it alongside the change that alters it.
 
 # Project structure
@@ -68,8 +68,9 @@ app/
     guest/  auth/  org/  assets/  scans/
     schedules/  findings/  reports/  notifications/  health/
   tools/
-    export_openapi.py  # dumps app.openapi() -> docs/openapi.json
+    export_openapi.py  # dumps app.openapi() -> api/openapi.json
+api/
+  openapi.json         # generated API contract (see "Generating the OpenAPI contract")
 docs/
-  openapi.json         # generated contract (see "Generating the OpenAPI contract")
   reference/           # source design docs (data-model, ADRs)
 ```

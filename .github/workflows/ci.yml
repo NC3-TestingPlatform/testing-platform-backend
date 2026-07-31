@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: OpenAPI contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run --frozen ruff check app
+
+      - name: Type check
+        run: uv run --frozen pyright app
+
+      - name: Validate OpenAPI spec
+        run: uv run --frozen openapi-spec-validator --schema 3.1 api/openapi.json
+
+      - name: Check that the committed spec is up to date (drift guard)
+        run: |
+          uv run --frozen python -m app.tools.export_openapi
+          git diff --exit-code -- api/openapi.json \
+            || { echo "::error::api/openapi.json is stale — run 'uv run python -m app.tools.export_openapi' and commit the result."; exit 1; }

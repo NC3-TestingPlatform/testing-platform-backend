@@ -13,5 +13,10 @@ dependencies = [
 dev = [
     "openapi-spec-validator>=0.9.0",
     "pyright>=1.1.411",
+    "pytest>=9.1.1",
     "ruff>=0.16.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
