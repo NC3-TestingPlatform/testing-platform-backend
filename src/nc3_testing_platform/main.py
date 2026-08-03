@@ -38,7 +38,7 @@ from nc3_testing_platform.domains.statements.router import router as statements_
 
 app = FastAPI(
     title="NC3 Testing Platform API",
-    version="4.0.4",
+    version="4.0.1",
     summary="v4.0 backend MVP for the NC3 Testing Platform.",
     openapi_url="/api/v1/openapi.json",
     docs_url="/docs",
