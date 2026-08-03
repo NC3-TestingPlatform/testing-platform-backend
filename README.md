@@ -64,9 +64,7 @@ src/nc3_testing_platform/
     errors.py          #   RFC 9457 problem+json errors + handlers
     pagination.py      #   cursor pagination
     security.py        #   OpenAPI security schemes + rate-limit contract
-  domains/             # one vertical slice per domain (router + schemas together)
-    guest/  auth/  org/  assets/  scans/
-    schedules/  findings/  reports/  notifications/  health/
+  domains/             # one vertical slice per domain
   tools/
     export_openapi.py  # dumps app.openapi() -> api/openapi.json
 api/
