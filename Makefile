@@ -1,7 +1,7 @@
 .PHONY: export-openapi lint
 
 export-openapi:
-	uv run python -m app.tools.export_openapi
+	uv run export-openapi
 
 lint:
 	uv run ruff check .

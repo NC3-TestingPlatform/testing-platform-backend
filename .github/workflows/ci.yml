@@ -30,16 +30,16 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint
-        run: uv run --frozen ruff check app
+        run: uv run --frozen ruff check src
 
       - name: Type check
-        run: uv run --frozen pyright app
+        run: uv run --frozen pyright src
 
       - name: Validate OpenAPI spec
         run: uv run --frozen openapi-spec-validator --schema 3.1 api/openapi.json
 
       - name: Check that the committed spec is up to date (drift guard)
         run: |
-          uv run --frozen python -m app.tools.export_openapi
+          uv run --frozen export-openapi
           git diff --exit-code -- api/openapi.json \
-            || { echo "::error::api/openapi.json is stale — run 'uv run python -m app.tools.export_openapi' and commit the result."; exit 1; }
+            || { echo "::error::api/openapi.json is stale — run 'uv run export-openapi' and commit the result."; exit 1; }

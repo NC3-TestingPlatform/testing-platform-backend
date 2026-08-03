@@ -1,5 +1,5 @@
 [project]
-name = "testing-platform-backend"
+name = "nc3-testing-platform"
 version = "0.1.0"
 description = "v4.0 backend MVP for the NC3 Testing Platform."
 readme = "README.md"
@@ -9,6 +9,9 @@ dependencies = [
     "pydantic[email]>=2.13.4",
 ]
 
+[project.scripts]
+export-openapi = "nc3_testing_platform.tools.export_openapi:main"
+
 [dependency-groups]
 dev = [
     "openapi-spec-validator>=0.9.0",
@@ -17,6 +20,19 @@ dev = [
     "ruff>=0.16.0",
 ]
 
+[build-system]
+requires = ["uv_build>=0.11.30,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "D", "ERA", "TD"]
+ignore = ["D105", "D107", "TD002", "TD003"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+
+[tool.pyright]
+include = ["src", "tests"]

@@ -1,19 +1,20 @@
-"""
-Export the generated OpenAPI document to `api/openapi.json`.
-Run: `uv run python -m app.tools.export_openapi` or `make export-openapi`
+"""Exports the generated OpenAPI document to `api/openapi.json`.
+
+Run: `uv run export-openapi` or `make export-openapi`.
 """
 
 import json
 import sys
 from pathlib import Path
 
-from app.main import app
+from nc3_testing_platform.main import app
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DEST = ROOT / "api" / "openapi.json"
 
 
 def main() -> None:
+    """Entry point for the `export-openapi` project script."""
     spec = app.openapi()
     DEST.write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n")
     print(

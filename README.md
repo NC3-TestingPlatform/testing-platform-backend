@@ -28,7 +28,7 @@ No environment variables or config are required yet.
 # Running the mock server
 
 ```bash
-uv run fastapi dev app/main.py
+uv run fastapi dev src/nc3_testing_platform/main.py
 ```
 
 - API base: http://localhost:8000/api/v1
@@ -40,10 +40,10 @@ Handlers return static stub data, so the running server doubles as a mock the fr
 
 # Generating the OpenAPI contract
 
-The OpenAPI 3.1 spec is generated from the FastAPI app (`app.main:app`) and written to `api/openapi.json`.
+The OpenAPI 3.1 spec is generated from the FastAPI app (`nc3_testing_platform.main:app`) and written to `api/openapi.json`.
 
 ```bash
-uv run python -m app.tools.export_openapi                 # write api/openapi.json
+uv run export-openapi                                         # write api/openapi.json
 uv run openapi-spec-validator --schema 3.1 api/openapi.json   # validate (exits 0 if valid)
 ```
 
@@ -56,7 +56,7 @@ frontend interfaces with; commit it alongside the change that alters it.
 > return stub data so the app runs as a live mock; there is no persistence, auth backend, or scan logic yet.
 
 ```
-app/
+src/nc3_testing_platform/
   main.py              # FastAPI app; mounts every domain router under /api/v1
   core/                # shared, cross-cutting building blocks
     enums.py           #   canonical enums
@@ -72,5 +72,5 @@ app/
 api/
   openapi.json         # generated API contract (see "Generating the OpenAPI contract")
 docs/
-  reference/           # source design docs (data-model, ADRs)
+  reference/           # reference documentation
 ```
