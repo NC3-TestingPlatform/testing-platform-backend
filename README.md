@@ -28,7 +28,7 @@ No environment variables or config are required yet.
 # Running the mock server
 
 ```bash
-uv run fastapi dev src/nc3_testing_platform/main.py
+make dev
 ```
 
 - API base: http://localhost:8000/api/v1
