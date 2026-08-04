@@ -27,13 +27,13 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --locked
 
       - name: Lint
-        run: uv run --frozen ruff check src
+        run: uv run --locked ruff check .
 
       - name: Type check
-        run: uv run --frozen pyright src
+        run: uv run --locked pyright
 
       - name: Test
-        run: uv run --frozen pytest
+        run: uv run --locked pytest
