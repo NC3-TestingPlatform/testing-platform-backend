@@ -170,7 +170,7 @@ async def list_scans(page: CursorPage) -> Page[ScanJob]:
 @router.get(
     "/{scan_id}",
     summary="Get a scan with its task snapshot",
-    responses=problem_responses(401, 404),
+    responses=problem_responses(404),
 )
 async def get_scan(
     scan_id: ResourceId, claim_token: ScanAccessToken = None
@@ -188,7 +188,7 @@ async def get_scan(
 @router.get(
     "/{scan_id}/results",
     summary="Get scan results",
-    responses=problem_responses(401, 404),
+    responses=problem_responses(404),
 )
 async def get_scan_results(
     scan_id: ResourceId, claim_token: ScanAccessToken = None
@@ -205,7 +205,7 @@ async def get_scan_results(
     "/{scan_id}/events",
     summary="Stream live scan progress",
     response_class=StreamingResponse,
-    responses={**_EVENT_STREAM_RESPONSE, **problem_responses(401, 404)},
+    responses={**_EVENT_STREAM_RESPONSE, **problem_responses(404)},
 )
 async def stream_scan_events(
     scan_id: ResourceId, claim_token: ScanAccessToken = None
