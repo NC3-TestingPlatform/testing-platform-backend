@@ -4,16 +4,30 @@ Wire field names match the database column names exactly (`organization_id`, not
 contract, and generated clients share one vocabulary.
 """
 
-from datetime import datetime
-from uuid import UUID
+from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    UUID7,
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 # Wire values are UUIDv7, which is time-sortable.
-ResourceId = UUID
+ResourceId = UUID7
+
 
 # Every timestamp in the contract is a UTC instant serialized as ISO-8601.
-Timestamp = datetime
+def _normalize_to_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC)
+
+Timestamp = Annotated[
+    AwareDatetime,
+    AfterValidator(_normalize_to_utc),
+]
 
 
 class BaseSchema(BaseModel):

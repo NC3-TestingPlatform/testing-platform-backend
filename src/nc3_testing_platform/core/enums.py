@@ -86,7 +86,7 @@ class ScanJobStatus(StrEnum):
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
 
 
 class ScanModule(StrEnum):
@@ -123,7 +123,7 @@ class ScanTaskStatus(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
     BLOCKED = "blocked"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
 
 
 class ScanGrade(StrEnum):
