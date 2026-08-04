@@ -22,7 +22,7 @@ def render(spec: dict[str, Any]) -> str:
 def main() -> None:
     """Entry point for the `export-openapi` project script."""
     spec = app.openapi()
-    DEST.write_text(render(spec))
+    DEST.write_text(render(spec), encoding="utf-8")
     print(
         f"Generated {DEST.relative_to(ROOT)} "
         f"(openapi {spec['openapi']}, {len(spec['paths'])} paths)",

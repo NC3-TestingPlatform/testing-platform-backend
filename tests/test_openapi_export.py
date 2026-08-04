@@ -50,7 +50,7 @@ def test_spec_declares_openapi_3_1(spec: dict[str, Any]) -> None:
 
 def test_committed_spec_matches_generated(spec: dict[str, Any]) -> None:
     """`api/openapi.json` is byte-identical to what `export-openapi` writes."""
-    assert Path(DEST).read_text() == render(spec), (
+    assert Path(DEST).read_text(encoding="utf-8") == render(spec), (
         "api/openapi.json is stale — run 'make export-openapi'"
     )
 
@@ -97,8 +97,7 @@ def test_error_responses_use_problem_details(spec: dict[str, Any]) -> None:
                 if not status.startswith(("4", "5")):
                     continue
                 content = response.get("content")
-                if not content:
-                    continue
+                assert content, f"{method.upper()} {path} {status} declares no body"
                 assert "application/problem+json" in content, (
                     f"{method.upper()} {path} {status} is not problem+json"
                 )
