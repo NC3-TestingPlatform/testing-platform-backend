@@ -8,7 +8,7 @@ Project repository for the NC3 Testing Platform backend (v4).
 
 - Python 3.13, [uv](https://docs.astral.sh/uv/) (packaging + virtualenv)
 - FastAPI + Pydantic — the app and its request/response models
-- openapi-spec-validator (dev) — validates the generated 3.1 spec
+- pytest + openapi-spec-validator (dev) — the contract test suite
 
 **Projected** — planned:
 
@@ -43,12 +43,13 @@ Handlers return static stub data, so the running server doubles as a mock the fr
 The OpenAPI 3.1 spec is generated from the FastAPI app (`nc3_testing_platform.main:app`) and written to `api/openapi.json`.
 
 ```bash
-uv run export-openapi                                         # write api/openapi.json
-uv run openapi-spec-validator --schema 3.1 api/openapi.json   # validate (exits 0 if valid)
+make export-openapi   # write api/openapi.json
+make test             # validate it, and check the committed file is current
 ```
 
-Regenerate and re-validate after any change to a router or Pydantic schema. `api/openapi.json` is the contract the
-frontend interfaces with; commit it alongside the change that alters it.
+Regenerate after any change to a router or Pydantic schema. `api/openapi.json` is the contract the frontend interfaces with; commit it alongside the change that alters it.
+
+`make test` validates the generated document against OpenAPI 3.1 and fails if the committed file differs from it. CI runs the same command.
 
 # Project structure
 
