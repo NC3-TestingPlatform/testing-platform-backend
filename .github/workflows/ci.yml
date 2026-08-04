@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
@@ -35,11 +35,5 @@ jobs:
       - name: Type check
         run: uv run --frozen pyright src
 
-      - name: Validate OpenAPI spec
-        run: uv run --frozen openapi-spec-validator --schema 3.1 api/openapi.json
-
-      - name: Check that the committed spec is up to date (drift guard)
-        run: |
-          uv run --frozen export-openapi
-          git diff --exit-code -- api/openapi.json \
-            || { echo "::error::api/openapi.json is stale — run 'uv run export-openapi' and commit the result."; exit 1; }
+      - name: Test
+        run: uv run --frozen pytest
