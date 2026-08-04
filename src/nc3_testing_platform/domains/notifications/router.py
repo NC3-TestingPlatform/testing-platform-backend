@@ -81,22 +81,6 @@ async def mark_read(notification_id: ResourceId) -> Notification:
     return notification
 
 
-@router.delete(
-    "/{notification_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Dismiss a notification",
-    responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
-)
-async def dismiss_notification(notification_id: ResourceId) -> Response:
-    """Permanently remove the caller's row.
-
-    Dismissal is deletion in v4.0 — there is no archived state, and no other user
-    is affected, because the row was never shared.
-    """
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.get(
     "/webhook",
     summary="Get the organization webhook",
@@ -144,6 +128,22 @@ def _sample_webhook() -> OrganizationWebhook:
         created_at=_T,
         updated_at=_T,
     )
+
+
+@router.delete(
+    "/{notification_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Dismiss a notification",
+    responses=problem_responses(401, 404),
+    dependencies=[Authenticated],
+)
+async def dismiss_notification(notification_id: ResourceId) -> Response:
+    """Permanently remove the caller's row.
+
+    Dismissal is deletion in v4.0 — there is no archived state, and no other user
+    is affected because the row was never shared.
+    """
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @account_router.get(

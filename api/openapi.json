@@ -2917,71 +2917,6 @@
         }
       }
     },
-    "/api/v1/notifications/{notification_id}": {
-      "delete": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Dismiss a notification",
-        "description": "Permanently remove the caller's row.\n\nDismissal is deletion in v4.0 — there is no archived state, and no other user\nis affected, because the row was never shared.",
-        "operationId": "dismiss_notification_api_v1_notifications__notification_id__delete",
-        "security": [
-          {
-            "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "notification_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid7",
-              "title": "Notification Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Unprocessable Content",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/notifications/webhook": {
       "get": {
         "tags": [
@@ -3159,6 +3094,71 @@
             "ApiKey": []
           }
         ]
+      }
+    },
+    "/api/v1/notifications/{notification_id}": {
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Dismiss a notification",
+        "description": "Permanently remove the caller's row.\n\nDismissal is deletion in v4.0 — there is no archived state, and no other user\nis affected because the row was never shared.",
+        "operationId": "dismiss_notification_api_v1_notifications__notification_id__delete",
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid7",
+              "title": "Notification Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/account": {
