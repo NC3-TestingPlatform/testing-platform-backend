@@ -65,6 +65,12 @@ src/nc3_testing_platform/
     pagination.py      #   cursor pagination
     security.py        #   OpenAPI security schemes + rate-limit contract
   domains/             # one vertical slice per domain
+    scans/             #   every slice follows this layout
+      models.py        #     SQLAlchemy models
+      schemas.py       #     Pydantic request and response models
+      repository.py    #     queries; session is the first argument
+      service.py       #     business logic and transaction boundaries
+      router.py        #     path operations
   tools/
     export_openapi.py  # dumps app.openapi() -> api/openapi.json
 api/
