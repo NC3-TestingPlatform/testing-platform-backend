@@ -19,6 +19,7 @@ from nc3_testing_platform.domains.assets.schemas import (
     AssetFeed,
     AssetFeedCreated,
     DomainVerification,
+    VerificationChallenge,
 )
 from nc3_testing_platform.domains.scans.examples import (
     ASSET_ID,
@@ -30,7 +31,7 @@ _T0 = datetime(2026, 6, 1, 8, 30, tzinfo=UTC)
 _T1 = datetime(2026, 7, 31, 9, 1, 12, tzinfo=UTC)
 
 _SUBDOMAIN_ASSET_ID = UUID("019ee1a3-0011-7a22-8b33-4c44d5e66f77")
-_VERIFICATION_ID = UUID("019ee1a3-1122-7b33-9c44-5d55e6f77a88")
+_CHALLENGE_ID = UUID("019ee1a3-1122-7b33-9c44-5d55e6f77a88")
 _FEED_ID = UUID("019ee1a3-2233-7c44-ad55-6e66f7a88b99")
 
 
@@ -68,31 +69,48 @@ def sample_discovered_asset() -> Asset:
     )
 
 
+def sample_challenge(checked: bool = False) -> VerificationChallenge:
+    """A zone-scoped challenge awaiting its DNS record.
+
+    `checked` marks a challenge a lookup has just run against, which is what sets
+    `last_recheck_at` and the failure code beside it.
+    """
+    return VerificationChallenge(
+        id=_CHALLENGE_ID,
+        requested_scope=VerificationScope.ZONE,
+        record_name=verification_record_name("example.lu"),
+        verification_token="verify-4f7a2c9e1b8d3056",
+        token_expires_at=_T0 + VERIFICATION_TOKEN_TTL,
+        requested_by_user_id=USER_ID,
+        requested_at=_T0,
+        last_recheck_at=_T1 if checked else None,
+        failure_code="dns.txt_record_not_found" if checked else None,
+    )
+
+
 def sample_verification(
     status: VerificationStatus = VerificationStatus.VERIFIED,
     checked: bool = False,
 ) -> DomainVerification:
-    """A zone-scoped verification in the given state.
-
-    `checked` marks a state that a lookup has just produced, which is what sets
-    `last_recheck_at`.
-    """
+    """A zone-scoped verification in the given state."""
     verified = status == VerificationStatus.VERIFIED
     return DomainVerification(
-        id=_VERIFICATION_ID,
         asset_id=ASSET_ID,
         status=status,
-        requested_scope=VerificationScope.ZONE,
         verified_scope=VerificationScope.ZONE if verified else None,
-        verification_token="verify-4f7a2c9e1b8d3056",
-        record_name=verification_record_name("example.lu"),
-        token_expires_at=_T0 + VERIFICATION_TOKEN_TTL,
-        requested_by_user_id=USER_ID,
-        requested_at=_T0,
         verified_at=_T0 if verified else None,
-        last_recheck_at=_T1 if checked else None,
-        failure_code=None if verified else "dns.txt_record_not_found",
-        updated_at=_T1,
+        challenge=None if verified else sample_challenge(checked=checked),
+    )
+
+
+def sample_reverification() -> DomainVerification:
+    """An exact-scoped proof holding while a challenge for zone coverage runs."""
+    return DomainVerification(
+        asset_id=ASSET_ID,
+        status=VerificationStatus.VERIFIED,
+        verified_scope=VerificationScope.EXACT,
+        verified_at=_T0,
+        challenge=sample_challenge(),
     )
 
 

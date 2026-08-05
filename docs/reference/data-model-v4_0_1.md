@@ -56,13 +56,12 @@ Conventions:
 
 ### 2.2 Assets and verification
 
-| Used by               | PostgreSQL type       | Values                           |
-|-----------------------|-----------------------|----------------------------------|
-| `asset`               | `asset_type`          | `domain`                         |
-| `asset`               | `asset_origin`        | `added`, `discovered`            |
-| `domain_verification` | `verification_status` | `pending`, `verified`            |
-| `domain_verification` | `verification_scope`  | `exact`, `zone`                  |
-| `domain_verification` | `dns_record_type`     | `TXT`                            |
+| Used by                                                | PostgreSQL type      | Values                |
+|--------------------------------------------------------|----------------------|-----------------------|
+| `asset`                                                | `asset_type`         | `domain`              |
+| `asset`                                                | `asset_origin`       | `added`, `discovered` |
+| `domain_verification`, `domain_verification_challenge` | `verification_scope` | `exact`, `zone`       |
+| `domain_verification_challenge`                        | `dns_record_type`    | `TXT`                 |
 
 `dns_record_type` values are uppercase.
 
@@ -203,66 +202,80 @@ erDiagram
 
 ### 4.1 `asset`
 
-| Column                      | Type           | Constraints                                                  |
-|-----------------------------|----------------|--------------------------------------------------------------|
-| `id`                        | UUID           | Primary key                                                  |
-| `organization_id`           | UUID           | Not null; foreign key to `organization.id`                   |
-| `asset_type`                | `asset_type`   | Not null                                                     |
+| Column                      | Type           | Constraints                                                                                       |
+|-----------------------------|----------------|---------------------------------------------------------------------------------------------------|
+| `id`                        | UUID           | Primary key                                                                                       |
+| `organization_id`           | UUID           | Not null; foreign key to `organization.id`                                                        |
+| `asset_type`                | `asset_type`   | Not null                                                                                          |
 | `value`                     | text           | Not null; lowercase IDNA A-label domain without a trailing dot, canonicalized at the API boundary |
-| `origin`                    | `asset_origin` | Not null                                                     |
-| `parent_asset_id`           | UUID           | Nullable; foreign key to `asset.id`                          |
-| `created_by_user_id`        | UUID           | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL` |
-| `regression_alerts_enabled` | boolean        | Not null; default `false`                                    |
-| `created_at`                | timestamptz    | Not null                                                     |
-| `updated_at`                | timestamptz    | Not null                                                     |
+| `origin`                    | `asset_origin` | Not null                                                                                          |
+| `parent_asset_id`           | UUID           | Nullable; foreign key to `asset.id`                                                               |
+| `created_by_user_id`        | UUID           | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL`                                      |
+| `regression_alerts_enabled` | boolean        | Not null; default `false`                                                                         |
+| `created_at`                | timestamptz    | Not null                                                                                          |
+| `updated_at`                | timestamptz    | Not null                                                                                          |
 
 - Unique constraint: (`organization_id`, `asset_type`, `value`).
 - An Asset is organization-owned. `created_by_user_id` records attribution and does not assign ownership.
 - Deletion is restricted: an asset referenced by scan history or by discovered children answers `409`. Referencing foreign keys restrict, never cascade or set null.
 
+Ownership is held in two tables. `domain_verification` records a proof that exists, and `domain_verification_challenge` records a challenge in progress. They are independent, so a domain keeps the coverage it has already proven while it re-proves ownership or asks for wider coverage.
+
 ### 4.2 `domain_verification`
 
-| Column                 | Type                  | Constraints                                                  |
-|------------------------|-----------------------|--------------------------------------------------------------|
-| `id`                   | UUID                  | Primary key                                                  |
-| `organization_id`      | UUID                  | Not null; foreign key to `organization.id`                   |
-| `asset_id`             | UUID                  | Not null; unique; foreign key to `asset.id`                  |
-| `status`               | `verification_status` | Not null                                                     |
-| `requested_scope`      | `verification_scope`  | Not null                                                     |
-| `verified_scope`       | `verification_scope`  | Nullable                                                     |
-| `record_type`          | `dns_record_type`     | Not null                                                     |
-| `record_name`          | text                  | Not null; DNS name at which the token is published           |
-| `verification_token`   | text                  | Not null; the complete record value                          |
-| `token_expires_at`     | timestamptz           | Not null; seven days after issue by default                  |
-| `requested_by_user_id` | UUID                  | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL` |
-| `requested_at`         | timestamptz           | Not null                                                     |
-| `verified_at`          | timestamptz           | Nullable                                                     |
-| `last_recheck_at`      | timestamptz           | Nullable                                                     |
-| `failure_code`         | text                  | Nullable                                                     |
-| `updated_at`           | timestamptz           | Not null                                                     |
+| Column            | Type                 | Constraints                                 |
+|-------------------|----------------------|---------------------------------------------|
+| `id`              | UUID                 | Primary key                                 |
+| `organization_id` | UUID                 | Not null; foreign key to `organization.id`  |
+| `asset_id`        | UUID                 | Not null; unique; foreign key to `asset.id` |
+| `verified_scope`  | `verification_scope` | Not null                                    |
+| `verified_at`     | timestamptz          | Not null                                    |
 
 Constraints:
 
 - The referenced Asset must have `asset_type = domain`.
-- `verified_scope` is non-null only when `status = verified`.
-- Changing `requested_scope` does not change `verified_scope` until verification succeeds.
+- A row exists exactly while the domain is proven, so proof is presence rather than a stored status.
 - Zone coverage is evaluated by DNS-label ancestry, not by string suffix matching.
+- A successful check writes this row and deletes the challenge that produced it in one transaction, so `verified_scope` changes only at the moment a wider coverage is actually proven.
+- The API status is computed from the two tables: `verified` while this row exists, `pending` while a challenge is unexpired, and `expired` otherwise. No stored enum carries it.
+- This table stores the current proof only. Verification attempts and status changes are recorded in `audit_event`.
+
+### 4.3 `domain_verification_challenge`
+
+| Column                 | Type                 | Constraints                                                  |
+|------------------------|----------------------|--------------------------------------------------------------|
+| `id`                   | UUID                 | Primary key                                                  |
+| `organization_id`      | UUID                 | Not null; foreign key to `organization.id`                   |
+| `asset_id`             | UUID                 | Not null; unique; foreign key to `asset.id`                  |
+| `requested_scope`      | `verification_scope` | Not null                                                     |
+| `record_type`          | `dns_record_type`    | Not null                                                     |
+| `record_name`          | text                 | Not null; DNS name at which the token is published           |
+| `verification_token`   | text                 | Not null; the complete record value                          |
+| `token_expires_at`     | timestamptz          | Not null; seven days after issue by default                  |
+| `requested_by_user_id` | UUID                 | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL` |
+| `requested_at`         | timestamptz          | Not null                                                     |
+| `last_recheck_at`      | timestamptz          | Nullable                                                     |
+| `failure_code`         | text                 | Nullable                                                     |
+
+Constraints:
+
+- An asset has at most one challenge in progress, and a challenge may exist whether or not the asset is already proven.
 - `record_name` is computed as `_<prefix>-verify.<domain>`, where the vendor prefix is deployment configuration.
 - `verification_token` is the whole record value. A client publishes it verbatim.
-- A verification in `pending` whose `token_expires_at` has passed is expired. Expiry is derived from that timestamp, so `verification_status` carries no `expired` value. The API exposes `expired` as a computed status.
-- `verified` is terminal. Reaching `token_expires_at` does not change a verification that already succeeded.
-- Replacing the token while `status = verified` is rejected. Re-proving ownership or widening scope starts a new challenge, and `verified_scope` holds until that challenge succeeds.
+- A challenge whose `token_expires_at` has passed answers no further checks. Reaching that deadline never touches an existing `domain_verification` row.
+- Replacing the token is rejected while the asset has a `domain_verification` row. Re-proving ownership or widening scope starts a new challenge instead, and the existing proof holds until that challenge succeeds.
 - `last_recheck_at` records the last time the record was looked for, whichever trigger caused it.
 - `failure_code` records the outcome of the most recent check and is cleared when a check succeeds.
-- This table stores the current state only. Verification attempts and status changes are recorded in `audit_event`.
+- The row is deleted when its check succeeds, so a spent token is never kept beside the proof it produced.
 
 ```mermaid
 erDiagram
     ORGANIZATION ||--o{ ASSET: owns
     ASSET o|--o{ ASSET: discovers
     ASSET ||--o| DOMAIN_VERIFICATION: has
+    ASSET ||--o| DOMAIN_VERIFICATION_CHALLENGE: has
     APP_USER o|--o{ ASSET: creates
-    APP_USER o|--o{ DOMAIN_VERIFICATION: requests
+    APP_USER o|--o{ DOMAIN_VERIFICATION_CHALLENGE: requests
 ```
 
 ## 5. Statements and responses
@@ -641,15 +654,15 @@ erDiagram
 
 ### 11.1 `notification`
 
-| Column       | Type        | Constraints                                                 |
-|--------------|-------------|-------------------------------------------------------------|
-| `id`         | UUID        | Primary key                                                 |
-| `user_id`    | UUID        | Not null; foreign key to `app_user.id`; `ON DELETE CASCADE` |
-| `type`       | text        | Not null; stable namespaced notification type               |
-| `schema_version` | text    | Not null; version of this type's `data` shape               |
-| `data`       | JSONB       | Not null; default `{}`                                      |
-| `read_at`    | timestamptz | Nullable                                                    |
-| `created_at` | timestamptz | Not null                                                    |
+| Column           | Type        | Constraints                                                 |
+|------------------|-------------|-------------------------------------------------------------|
+| `id`             | UUID        | Primary key                                                 |
+| `user_id`        | UUID        | Not null; foreign key to `app_user.id`; `ON DELETE CASCADE` |
+| `type`           | text        | Not null; stable namespaced notification type               |
+| `schema_version` | text        | Not null; version of this type's `data` shape               |
+| `data`           | JSONB       | Not null; default `{}`                                      |
+| `read_at`        | timestamptz | Nullable                                                    |
+| `created_at`     | timestamptz | Not null                                                    |
 
 Rules:
 
@@ -745,8 +758,8 @@ erDiagram
 1. Every organization-owned row carries `organization_id`. Guest scan rows may have a null `organization_id`. Foreign keys between organization-owned rows must reference rows in the same organization.
 2. Row-level security is enforced on all organization-owned tables. `scan_task`, `scan_result`, and `finding` copy `organization_id` from `scan_job`. The value is rechecked when asynchronous results are written.
 3. `asset.asset_type` is restricted to `domain` in v4.0.
-4. A DomainVerification covers an intrusive target only when its status is `verified` and its `verified_scope` covers that target.
-5. Domain re-verification occurs before an intrusive ScanTask is queued. The outcome is recorded in `domain_verification` and `audit_event`, not in a separate authorization table.
+4. A DomainVerification covers an intrusive target only when a `domain_verification` row exists for the asset and its `verified_scope` covers that target.
+5. Domain re-verification occurs before an intrusive ScanTask is queued. The outcome is recorded in `domain_verification`, `domain_verification_challenge`, and `audit_event`, not in a separate authorization table.
 6. Current MFA assurance is read from the identity-provider session or token. It is not persisted as a User boolean.
 7. A ScanJob containing an intrusive ScanTask requires two current StatementResponse rows bound to that ScanJob: an attestation for `scan_target_permission` and an acceptance for `intrusive_scan_risk_liability`.
 8. All v4.0 domain ScanTasks are non-intrusive. File ScanTasks use `classification = not_applicable`.
@@ -762,40 +775,38 @@ erDiagram
 
 Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Cross-row and cross-table rules stay in §13.
 
-| Table | Constraint | Enforces |
-|---|---|---|
-| `organization_invitation` | `(accepted_at IS NULL) = (accepted_by_user_id IS NULL)` | acceptance records the actor and the time together |
-| `asset` | `parent_asset_id IS NULL OR origin = 'discovered'` | only discovery produces child assets |
-| `domain_verification` | `(status = 'verified') = (verified_scope IS NOT NULL)` | proven coverage exists exactly on the verified state |
-| `domain_verification` | `(status = 'verified') = (verified_at IS NOT NULL)` | the proof timestamp exists exactly on the verified state |
-| `domain_verification` | `failure_code IS NULL OR last_recheck_at IS NOT NULL` | a failure code always follows a recorded check |
-| `file_upload` | `(purged_at IS NULL) = (storage_key IS NOT NULL)` | the storage reference exists exactly while the bytes do |
-| `file_upload` | `uploaded_by_user_id IS NULL OR organization_id IS NOT NULL` | a known uploader implies a known organization |
-| `file_upload` | `purge_due_at <= uploaded_at + interval '24 hours'` | the purge deadline is at most 24 hours after upload |
-| `scan_job` | `num_nonnulls(asset_id, target_domain, file_upload_id) = 1` | exactly one launch target |
-| `scan_job` | `(source = 'schedule') = (schedule_id IS NOT NULL)` | schedule provenance |
-| `scan_job` | `(source = 'api') = (api_key_id IS NOT NULL)` | API-key provenance |
-| `scan_job` | `target_domain IS NULL OR source = 'guest'` | free target text exists only on guest jobs |
-| `scan_job` | `claim_token_hash IS NULL OR source = 'guest'` | only guest jobs are claimable |
-| `scan_job` | `source <> 'guest' OR claimed_at IS NOT NULL OR claim_token_hash IS NOT NULL` | an unclaimed guest job always holds the claim hash |
-| `scan_job` | `(claimed_at IS NULL) = (claimed_by_user_id IS NULL)` | claiming records the actor and the time together |
-| `scan_job` | `claimed_at IS NULL OR claim_token_hash IS NULL` | the hash is discarded on claim |
-| `scan_job` | `organization_id IS NOT NULL OR source = 'guest'` | only guest jobs lack an organization |
-| `scan_job` | `(status IN ('completed', 'partial', 'failed', 'canceled')) = (finished_at IS NOT NULL)` | terminal state and finish time agree |
-| `scan_job` | `status <> 'running' OR started_at IS NOT NULL` | a running job has started |
-| `scan_job` | `(purge_at IS NOT NULL) = (status IN ('completed', 'partial', 'failed', 'canceled') OR (source = 'guest' AND claimed_at IS NULL))` | the deadline exists exactly on terminal jobs and unclaimed guest jobs |
-| `scan_task` | `num_nonnulls(target_asset_id, target_domain, file_upload_id) = 1` | exactly one task target |
-| `scan_task` | `status <> 'blocked' OR status_reason IS NOT NULL` | blocked always says why |
-| `scan_task` | `(module = 'file') = (classification = 'not_applicable')` | `not_applicable` belongs to File tasks alone |
-| `scan_task` | `file_upload_id IS NULL OR module = 'file'` | only File tasks reference an upload |
-| `scan_task` | `(status IN ('completed', 'failed', 'skipped', 'blocked', 'canceled')) = (finished_at IS NOT NULL)` | terminal state and finish time agree |
-| `scan_task` | `status <> 'running' OR started_at IS NOT NULL` | a running task has started |
-| `statement_response` | `(context_type IS NULL) = (context_id IS NULL)` | a context is named and bound together |
-| `report` | `num_nonnulls(source_scan_job_id, source_scan_task_id) = 1` | exactly one source |
-| `report` | `tier = 'technical' OR technical_view IS NULL` | view depth applies to technical reports alone |
-| `api_key` | `revocation_reason IS NULL OR revoked_at IS NOT NULL` | a reason always accompanies a revocation |
-| `audit_event` | `num_nonnulls(payload_encrypted, wrapped_dek, envelope_id, encryption_metadata) IN (0, 4)` | the encrypted-payload column group is all-or-none |
-| `audit_event` | `detail IS NOT NULL OR payload_encrypted IS NOT NULL` | an event carries detail, an encrypted payload, or both |
+| Table                           | Constraint                                                                                                                         | Enforces                                                              |
+|---------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
+| `organization_invitation`       | `(accepted_at IS NULL) = (accepted_by_user_id IS NULL)`                                                                            | acceptance records the actor and the time together                    |
+| `asset`                         | `parent_asset_id IS NULL OR origin = 'discovered'`                                                                                 | only discovery produces child assets                                  |
+| `domain_verification_challenge` | `failure_code IS NULL OR last_recheck_at IS NOT NULL`                                                                              | a failure code always follows a recorded check                        |
+| `file_upload`                   | `(purged_at IS NULL) = (storage_key IS NOT NULL)`                                                                                  | the storage reference exists exactly while the bytes do               |
+| `file_upload`                   | `uploaded_by_user_id IS NULL OR organization_id IS NOT NULL`                                                                       | a known uploader implies a known organization                         |
+| `file_upload`                   | `purge_due_at <= uploaded_at + interval '24 hours'`                                                                                | the purge deadline is at most 24 hours after upload                   |
+| `scan_job`                      | `num_nonnulls(asset_id, target_domain, file_upload_id) = 1`                                                                        | exactly one launch target                                             |
+| `scan_job`                      | `(source = 'schedule') = (schedule_id IS NOT NULL)`                                                                                | schedule provenance                                                   |
+| `scan_job`                      | `(source = 'api') = (api_key_id IS NOT NULL)`                                                                                      | API-key provenance                                                    |
+| `scan_job`                      | `target_domain IS NULL OR source = 'guest'`                                                                                        | free target text exists only on guest jobs                            |
+| `scan_job`                      | `claim_token_hash IS NULL OR source = 'guest'`                                                                                     | only guest jobs are claimable                                         |
+| `scan_job`                      | `source <> 'guest' OR claimed_at IS NOT NULL OR claim_token_hash IS NOT NULL`                                                      | an unclaimed guest job always holds the claim hash                    |
+| `scan_job`                      | `(claimed_at IS NULL) = (claimed_by_user_id IS NULL)`                                                                              | claiming records the actor and the time together                      |
+| `scan_job`                      | `claimed_at IS NULL OR claim_token_hash IS NULL`                                                                                   | the hash is discarded on claim                                        |
+| `scan_job`                      | `organization_id IS NOT NULL OR source = 'guest'`                                                                                  | only guest jobs lack an organization                                  |
+| `scan_job`                      | `(status IN ('completed', 'partial', 'failed', 'canceled')) = (finished_at IS NOT NULL)`                                           | terminal state and finish time agree                                  |
+| `scan_job`                      | `status <> 'running' OR started_at IS NOT NULL`                                                                                    | a running job has started                                             |
+| `scan_job`                      | `(purge_at IS NOT NULL) = (status IN ('completed', 'partial', 'failed', 'canceled') OR (source = 'guest' AND claimed_at IS NULL))` | the deadline exists exactly on terminal jobs and unclaimed guest jobs |
+| `scan_task`                     | `num_nonnulls(target_asset_id, target_domain, file_upload_id) = 1`                                                                 | exactly one task target                                               |
+| `scan_task`                     | `status <> 'blocked' OR status_reason IS NOT NULL`                                                                                 | blocked always says why                                               |
+| `scan_task`                     | `(module = 'file') = (classification = 'not_applicable')`                                                                          | `not_applicable` belongs to File tasks alone                          |
+| `scan_task`                     | `file_upload_id IS NULL OR module = 'file'`                                                                                        | only File tasks reference an upload                                   |
+| `scan_task`                     | `(status IN ('completed', 'failed', 'skipped', 'blocked', 'canceled')) = (finished_at IS NOT NULL)`                                | terminal state and finish time agree                                  |
+| `scan_task`                     | `status <> 'running' OR started_at IS NOT NULL`                                                                                    | a running task has started                                            |
+| `statement_response`            | `(context_type IS NULL) = (context_id IS NULL)`                                                                                    | a context is named and bound together                                 |
+| `report`                        | `num_nonnulls(source_scan_job_id, source_scan_task_id) = 1`                                                                        | exactly one source                                                    |
+| `report`                        | `tier = 'technical' OR technical_view IS NULL`                                                                                     | view depth applies to technical reports alone                         |
+| `api_key`                       | `revocation_reason IS NULL OR revoked_at IS NOT NULL`                                                                              | a reason always accompanies a revocation                              |
+| `audit_event`                   | `num_nonnulls(payload_encrypted, wrapped_dek, envelope_id, encryption_metadata) IN (0, 4)`                                         | the encrypted-payload column group is all-or-none                     |
+| `audit_event`                   | `detail IS NOT NULL OR payload_encrypted IS NOT NULL`                                                                              | an event carries detail, an encrypted payload, or both                |
 
 Uniqueness rules that need a partial or expression index rather than a plain constraint:
 

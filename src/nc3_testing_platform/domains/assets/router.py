@@ -139,8 +139,12 @@ async def create_verification(
 
     Requires current MFA assurance, read from the OIDC token rather than from any
     stored flag — proving control of a domain is what later authorizes scanning it.
+
+    On an already-verified asset the response carries both the standing proof and
+    the new challenge, so coverage in force is never withdrawn while ownership is
+    re-proven.
     """
-    return examples.sample_verification(status=VerificationStatus.PENDING)
+    return examples.sample_reverification()
 
 
 @router.post(

@@ -3,9 +3,9 @@
 An Asset is organization-owned, not user-owned: `created_by_user_id` is attribution
 and nothing more, so a member leaving never orphans an asset or its history.
 
-Verification is a separate nested resource with zero or one current state, not a
-field on the Asset. An asset list therefore carries no verification badge; a
-client that wants one issues a second call per asset.
+Verification is a separate nested resource carrying the coverage proven and the
+challenge running, not a field on the Asset. An asset list therefore carries no
+verification badge; a client that wants one issues a second call per asset.
 """
 
 from pydantic import BaseModel, Field
@@ -79,26 +79,16 @@ class AssetUpdate(BaseModel):
     regression_alerts_enabled: bool
 
 
-class DomainVerification(BaseSchema):
-    """Current state of one domain-ownership challenge.
+class VerificationChallenge(BaseSchema):
+    """A DNS record to publish to prove control of the domain.
 
-    Only the current state lives here. Attempts and transitions are recorded in
-    the audit log.
+    Present while a challenge is answerable, and while its last check is being shown.
+    Absent once the challenge has produced its proof and absent on a domain with no challenge running.
     """
 
     id: ResourceId
-    asset_id: ResourceId
-    status: VerificationStatus
     requested_scope: VerificationScope = Field(
-        description="Coverage the user asked for."
-    )
-    verified_scope: VerificationScope | None = Field(
-        default=None,
-        description=(
-            "Coverage actually proven. Non-null only when verified. Re-requesting a "
-            "wider scope does not widen this until a check succeeds, so an existing "
-            "proof is never silently upgraded."
-        ),
+        description="Coverage this challenge proves if it succeeds."
     )
     record_type: DnsRecordType = Field(
         default=DnsRecordType.TXT,
@@ -122,13 +112,12 @@ class DomainVerification(BaseSchema):
     token_expires_at: Timestamp = Field(
         description=(
             "When the challenge stops being answerable. Seven days from issue by "
-            "default. Reaching it moves an unanswered challenge to `expired`; a "
-            "verification that already succeeded is unaffected."
+            "default. Reaching it retires the challenge; a proof already recorded is "
+            "unaffected."
         )
     )
     requested_by_user_id: ResourceId | None = None
     requested_at: Timestamp
-    verified_at: Timestamp | None = None
     last_recheck_at: Timestamp | None = Field(
         default=None,
         description=(
@@ -142,7 +131,46 @@ class DomainVerification(BaseSchema):
         default=None,
         description="Stable namespaced reason the last check did not succeed.",
     )
-    updated_at: Timestamp
+
+
+class DomainVerification(BaseSchema):
+    """Current ownership state of one domain: the proof, plus any challenge running against it.
+
+    The proof and the challenge are independent.
+    A domain that is already verified keeps `verified_scope` while a new challenge runs, so re-proving ownership or widening coverage never withdraws coverage that is already proven.
+
+    Only the current state lives here.
+    Attempts and transitions are recorded in the audit log.
+    """
+
+    asset_id: ResourceId
+    status: VerificationStatus = Field(
+        description=(
+            "`verified` whenever a proof exists, whatever the challenge is doing. "
+            "`pending` while an unanswered challenge is still answerable. `expired` "
+            "once it is no longer answerable and no proof exists."
+        )
+    )
+    verified_scope: VerificationScope | None = Field(
+        default=None,
+        description=(
+            "Coverage actually proven, null until a challenge first succeeds. "
+            "Requesting a wider scope does not widen this until that challenge "
+            "succeeds, so an existing proof is never silently upgraded."
+        ),
+    )
+    verified_at: Timestamp | None = Field(
+        default=None,
+        description="When the proof was recorded. Non-null exactly when `verified_scope` is.",
+    )
+    challenge: VerificationChallenge | None = Field(
+        default=None,
+        description=(
+            "The challenge currently running, or null when none is. It appears "
+            "alongside `verified_scope` while an already-verified domain re-proves "
+            "ownership or widens its coverage."
+        ),
+    )
 
 
 class VerificationCreate(BaseModel):

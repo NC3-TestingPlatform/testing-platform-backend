@@ -1331,7 +1331,7 @@
           "assets"
         ],
         "summary": "Start a verification challenge",
-        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the OIDC token rather than from any\nstored flag — proving control of a domain is what later authorizes scanning it.",
+        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the OIDC token rather than from any\nstored flag — proving control of a domain is what later authorizes scanning it.\n\nOn an already-verified asset the response carries both the standing proof and\nthe new challenge, so coverage in force is never withdrawn while ownership is\nre-proven.",
         "operationId": "create_verification_api_v1_assets__asset_id__verification_post",
         "security": [
           {
@@ -5487,22 +5487,14 @@
       },
       "DomainVerification": {
         "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid7",
-            "title": "Id"
-          },
           "asset_id": {
             "type": "string",
             "format": "uuid7",
             "title": "Asset Id"
           },
           "status": {
-            "$ref": "#/components/schemas/VerificationStatus"
-          },
-          "requested_scope": {
-            "$ref": "#/components/schemas/VerificationScope",
-            "description": "Coverage the user asked for."
+            "$ref": "#/components/schemas/VerificationStatus",
+            "description": "`verified` whenever a proof exists, whatever the challenge is doing. `pending` while an unanswered challenge is still answerable. `expired` once it is no longer answerable and no proof exists."
           },
           "verified_scope": {
             "anyOf": [
@@ -5513,51 +5505,7 @@
                 "type": "null"
               }
             ],
-            "description": "Coverage actually proven. Non-null only when verified. Re-requesting a wider scope does not widen this until a check succeeds, so an existing proof is never silently upgraded."
-          },
-          "record_type": {
-            "$ref": "#/components/schemas/DnsRecordType",
-            "description": "Type of DNS record to create.",
-            "default": "TXT"
-          },
-          "record_name": {
-            "type": "string",
-            "title": "Record Name",
-            "description": "Name of the DNS record to create. Computed by the server from the asset's domain and a deployment-configured vendor prefix. Display the returned value; do not rebuild it.",
-            "examples": [
-              "_nc3-verify.example.lu"
-            ]
-          },
-          "verification_token": {
-            "type": "string",
-            "title": "Verification Token",
-            "description": "Complete value of the record, pasted verbatim. The client does not wrap, prefix, or encode it.",
-            "examples": [
-              "verify-4f7a2c9e1b8d3056"
-            ]
-          },
-          "token_expires_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Token Expires At",
-            "description": "When the challenge stops being answerable. Seven days from issue by default. Reaching it moves an unanswered challenge to `expired`; a verification that already succeeded is unaffected."
-          },
-          "requested_by_user_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid7"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Requested By User Id"
-          },
-          "requested_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Requested At"
+            "description": "Coverage actually proven, null until a challenge first succeeds. Requesting a wider scope does not widen this until that challenge succeeds, so an existing proof is never silently upgraded."
           },
           "verified_at": {
             "anyOf": [
@@ -5569,53 +5517,28 @@
                 "type": "null"
               }
             ],
-            "title": "Verified At"
+            "title": "Verified At",
+            "description": "When the proof was recorded. Non-null exactly when `verified_scope` is."
           },
-          "last_recheck_at": {
+          "challenge": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "date-time"
+                "$ref": "#/components/schemas/VerificationChallenge"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Last Recheck At",
-            "description": "When the record was last looked for, whatever triggered the lookup — a user pressing verify, or the recheck that runs before an intrusive task is queued. Null until the first check. Pair it with `failure_code` to show why the last attempt did not succeed."
-          },
-          "failure_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failure Code",
-            "description": "Stable namespaced reason the last check did not succeed."
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
+            "description": "The challenge currently running, or null when none is. It appears alongside `verified_scope` while an already-verified domain re-proves ownership or widens its coverage."
           }
         },
         "type": "object",
         "required": [
-          "id",
           "asset_id",
-          "status",
-          "requested_scope",
-          "record_name",
-          "verification_token",
-          "token_expires_at",
-          "requested_at",
-          "updated_at"
+          "status"
         ],
         "title": "DomainVerification",
-        "description": "Current state of one domain-ownership challenge.\n\nOnly the current state lives here. Attempts and transitions are recorded in\nthe audit log."
+        "description": "Current ownership state of one domain: the proof, plus any challenge running against it.\n\nThe proof and the challenge are independent.\nA domain that is already verified keeps `verified_scope` while a new challenge runs, so re-proving ownership or widening coverage never withdraws coverage that is already proven.\n\nOnly the current state lives here.\nAttempts and transitions are recorded in the audit log."
       },
       "FeedFormat": {
         "type": "string",
@@ -8055,6 +7978,99 @@
         ],
         "title": "TrendDirection",
         "description": "Movement of a score against the previous comparable measurement."
+      },
+      "VerificationChallenge": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid7",
+            "title": "Id"
+          },
+          "requested_scope": {
+            "$ref": "#/components/schemas/VerificationScope",
+            "description": "Coverage this challenge proves if it succeeds."
+          },
+          "record_type": {
+            "$ref": "#/components/schemas/DnsRecordType",
+            "description": "Type of DNS record to create.",
+            "default": "TXT"
+          },
+          "record_name": {
+            "type": "string",
+            "title": "Record Name",
+            "description": "Name of the DNS record to create. Computed by the server from the asset's domain and a deployment-configured vendor prefix. Display the returned value; do not rebuild it.",
+            "examples": [
+              "_nc3-verify.example.lu"
+            ]
+          },
+          "verification_token": {
+            "type": "string",
+            "title": "Verification Token",
+            "description": "Complete value of the record, pasted verbatim. The client does not wrap, prefix, or encode it.",
+            "examples": [
+              "verify-4f7a2c9e1b8d3056"
+            ]
+          },
+          "token_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Token Expires At",
+            "description": "When the challenge stops being answerable. Seven days from issue by default. Reaching it retires the challenge; a proof already recorded is unaffected."
+          },
+          "requested_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid7"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By User Id"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Requested At"
+          },
+          "last_recheck_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Recheck At",
+            "description": "When the record was last looked for, whatever triggered the lookup — a user pressing verify, or the recheck that runs before an intrusive task is queued. Null until the first check. Pair it with `failure_code` to show why the last attempt did not succeed."
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code",
+            "description": "Stable namespaced reason the last check did not succeed."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "requested_scope",
+          "record_name",
+          "verification_token",
+          "token_expires_at",
+          "requested_at"
+        ],
+        "title": "VerificationChallenge",
+        "description": "A DNS record to publish to prove control of the domain.\n\nPresent while a challenge is answerable, and while its last check is being shown.\nAbsent once the challenge has produced its proof and absent on a domain with no challenge running."
       },
       "VerificationCreate": {
         "properties": {

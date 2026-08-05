@@ -32,8 +32,10 @@ POST /api/v1/scans/{scan_id}/claim
 
 `POST /scans` with `Content-Type: application/json` accepts exactly one target field, selected by access state.
 
-- **Registered user:** carries `asset_id`. The Asset must belong to the caller's organization. Carrying `target` answers `422`.
-- **Guest:** carries `target`, a domain as free text — the only place in the API where free target text exists. The server canonicalizes it to lowercase IDNA (A-label) form without a trailing dot; text that does not parse as a domain answers `422`. Carrying `asset_id` answers `422`. Limited to non-intrusive tests. Anti-abuse gates apply. Persisted in `scan_job.target_domain` with no organization until claimed (§2.3).
+- **Registered
+  user:** carries `asset_id`. The Asset must belong to the caller's organization. Carrying `target` answers `422`.
+-
+**Guest:** carries `target`, a domain as free text — the only place in the API where free target text exists. The server canonicalizes it to lowercase IDNA (A-label) form without a trailing dot; text that does not parse as a domain answers `422`. Carrying `asset_id` answers `422`. Limited to non-intrusive tests. Anti-abuse gates apply. Persisted in `scan_job.target_domain` with no organization until claimed (§2.3).
 - Both variants carry `modules`, a list of one or more. Requesting the `file` module answers `422`.
 - Both variants may carry `module_configuration`. Each module defines its own option shape; the web module's subdomain-discovery option is one example.
 - Neither variant accepts file data.
@@ -150,13 +152,13 @@ POST   /api/v1/assets/{asset_id}/feeds/{feed_id}/revoke
 
 ### 5.1 Verification
 
-Verification is a separate resource nested under the Asset, with zero or one current state.
+Verification is a separate resource nested under the Asset. Its representation carries the coverage already proven and the challenge currently running, and either of the two may be absent.
 
-- `POST .../verification` creates a challenge with the requested `exact` or `zone` scope.
+- `POST .../verification` creates a challenge with the requested `exact` or `zone` scope. On an already-verified asset the challenge is created beside the standing proof.
 - `POST .../checks` triggers a DNS check.
 - `POST .../token` replaces the challenge token.
 
-The response fully specifies the record to publish:
+The `challenge` object fully specifies the record to publish:
 
 | Field                | Example                   | Meaning                                                                     |
 |----------------------|---------------------------|-----------------------------------------------------------------------------|
@@ -167,10 +169,10 @@ The response fully specifies the record to publish:
 Rules:
 
 - Clients display the returned `record_name` rather than rebuilding it.
-- A challenge expires seven days after issue by default: a verification reads as `expired` once `token_expires_at` has passed without a successful check. `verified` is terminal and holds past that deadline.
+- A challenge expires seven days after issue by default: a verification reads as `expired` once `token_expires_at` has passed with no coverage proven. An asset that is already verified reads as `verified` past that deadline, whatever its challenge is doing.
 - `POST .../token` answers `409` on a verified asset. Re-proving ownership or widening scope starts a new challenge with `POST .../verification`, which leaves `verified_scope` intact until the new challenge succeeds.
-- `POST .../checks` sets `last_recheck_at` whether or not the record was found. A not-found result answers `200` with the status still `pending` and a `failure_code`.
-- Verification statuses are `pending`, `verified`, and `expired`.
+- `POST .../checks` sets `challenge.last_recheck_at` whether or not the record was found. A not-found result answers `200` with the challenge still in place and a `failure_code`.
+- Verification statuses are `pending`, `verified`, and `expired`. The status is computed from `verified_scope` and `challenge`, so no request has to reconcile the three of them.
 - Current MFA assurance is read from the identity provider's session or token.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
