@@ -18,7 +18,12 @@ from nc3_testing_platform.core.enums import (
     VerificationScope,
     VerificationStatus,
 )
-from nc3_testing_platform.core.schemas import BaseSchema, ResourceId, Timestamp
+from nc3_testing_platform.core.schemas import (
+    BaseSchema,
+    DomainName,
+    ResourceId,
+    Timestamp,
+)
 
 
 class Asset(BaseSchema):
@@ -27,8 +32,8 @@ class Asset(BaseSchema):
     id: ResourceId
     organization_id: ResourceId
     asset_type: AssetType
-    value: str = Field(
-        description="Canonical IDNA domain without a trailing dot.",
+    value: DomainName = Field(
+        description="Canonical domain: lowercase IDNA (A-label) form without a trailing dot.",
         examples=["example.lu"],
     )
     origin: AssetOrigin = Field(
@@ -53,8 +58,11 @@ class Asset(BaseSchema):
 class AssetCreate(BaseModel):
     """Register a domain to monitor."""
 
-    value: str = Field(
-        description="Canonical IDNA domain without a trailing dot.",
+    value: DomainName = Field(
+        description=(
+            "Domain to monitor. Unicode or ASCII input is accepted and "
+            "canonicalized to lowercase IDNA (A-label) form without a trailing dot."
+        ),
         examples=["example.lu"],
     )
     asset_type: AssetType = AssetType.DOMAIN

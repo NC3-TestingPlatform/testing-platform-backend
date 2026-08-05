@@ -208,7 +208,7 @@ erDiagram
 | `id`                        | UUID           | Primary key                                                  |
 | `organization_id`           | UUID           | Not null; foreign key to `organization.id`                   |
 | `asset_type`                | `asset_type`   | Not null                                                     |
-| `value`                     | text           | Not null; canonical IDNA domain without a trailing dot       |
+| `value`                     | text           | Not null; lowercase IDNA A-label domain without a trailing dot, canonicalized at the API boundary |
 | `origin`                    | `asset_origin` | Not null                                                     |
 | `parent_asset_id`           | UUID           | Nullable; foreign key to `asset.id`                          |
 | `created_by_user_id`        | UUID           | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL` |
@@ -380,7 +380,7 @@ erDiagram
 | `schedule_id`          | UUID              | Nullable; foreign key to `schedule.id`                                                              |
 | `api_key_id`           | UUID              | Nullable; foreign key to `api_key.id`                                                               |
 | `asset_id`             | UUID              | Nullable; foreign key to `asset.id`                                                                 |
-| `target_domain`        | text              | Nullable; canonical domain not stored as an Asset                                                   |
+| `target_domain`        | text              | Nullable; lowercase IDNA A-label domain not stored as an Asset                                      |
 | `file_upload_id`       | UUID              | Nullable; unique when present; foreign key to `file_upload.id`                                      |
 | `modules`              | `scan_module[]`   | Not null; what the launch asked for. Compare against the tasks to see what ran                      |
 | `module_configuration` | JSONB             | Not null; default `{}`                                                                              |
@@ -756,4 +756,50 @@ erDiagram
 13. Deleting an AppUser cascades `user_key_envelope`, notifications, and other user-owned operational data, sets organization-owned attribution references to null, and leaves no plain AppUser identifier in retained StatementResponse or AuditEvent rows.
 14. Invitation acceptance requires a matching verified email and atomically assigns the invitation organization and role. An existing member of another organization cannot accept.
 15. `scan_task.id` is the queue task identifier. Durable cancellation intent is stored in `scan_task.cancellation_requested_at`. A canceled task cannot later produce an accepted successful result.
+
+## 14. Row-level check constraints
+
+Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Cross-row and cross-table rules stay in §13.
+
+| Table | Constraint | Enforces |
+|---|---|---|
+| `organization_invitation` | `(accepted_at IS NULL) = (accepted_by_user_id IS NULL)` | acceptance records the actor and the time together |
+| `asset` | `parent_asset_id IS NULL OR origin = 'discovered'` | only discovery produces child assets |
+| `domain_verification` | `(status = 'verified') = (verified_scope IS NOT NULL)` | proven coverage exists exactly on the verified state |
+| `domain_verification` | `(status = 'verified') = (verified_at IS NOT NULL)` | the proof timestamp exists exactly on the verified state |
+| `domain_verification` | `failure_code IS NULL OR last_recheck_at IS NOT NULL` | a failure code always follows a recorded check |
+| `file_upload` | `(purged_at IS NULL) = (storage_key IS NOT NULL)` | the storage reference exists exactly while the bytes do |
+| `file_upload` | `uploaded_by_user_id IS NULL OR organization_id IS NOT NULL` | a known uploader implies a known organization |
+| `file_upload` | `purge_due_at <= uploaded_at + interval '24 hours'` | the purge deadline is at most 24 hours after upload |
+| `scan_job` | `num_nonnulls(asset_id, target_domain, file_upload_id) = 1` | exactly one launch target |
+| `scan_job` | `(source = 'schedule') = (schedule_id IS NOT NULL)` | schedule provenance |
+| `scan_job` | `(source = 'api') = (api_key_id IS NOT NULL)` | API-key provenance |
+| `scan_job` | `target_domain IS NULL OR source = 'guest'` | free target text exists only on guest jobs |
+| `scan_job` | `claim_token_hash IS NULL OR source = 'guest'` | only guest jobs are claimable |
+| `scan_job` | `source <> 'guest' OR claimed_at IS NOT NULL OR claim_token_hash IS NOT NULL` | an unclaimed guest job always holds the claim hash |
+| `scan_job` | `(claimed_at IS NULL) = (claimed_by_user_id IS NULL)` | claiming records the actor and the time together |
+| `scan_job` | `claimed_at IS NULL OR claim_token_hash IS NULL` | the hash is discarded on claim |
+| `scan_job` | `organization_id IS NOT NULL OR source = 'guest'` | only guest jobs lack an organization |
+| `scan_job` | `(status IN ('completed', 'partial', 'failed', 'canceled')) = (finished_at IS NOT NULL)` | terminal state and finish time agree |
+| `scan_job` | `status <> 'running' OR started_at IS NOT NULL` | a running job has started |
+| `scan_job` | `(purge_at IS NOT NULL) = (status IN ('completed', 'partial', 'failed', 'canceled') OR (source = 'guest' AND claimed_at IS NULL))` | the deadline exists exactly on terminal jobs and unclaimed guest jobs |
+| `scan_task` | `num_nonnulls(target_asset_id, target_domain, file_upload_id) = 1` | exactly one task target |
+| `scan_task` | `status <> 'blocked' OR status_reason IS NOT NULL` | blocked always says why |
+| `scan_task` | `(module = 'file') = (classification = 'not_applicable')` | `not_applicable` belongs to File tasks alone |
+| `scan_task` | `file_upload_id IS NULL OR module = 'file'` | only File tasks reference an upload |
+| `scan_task` | `(status IN ('completed', 'failed', 'skipped', 'blocked', 'canceled')) = (finished_at IS NOT NULL)` | terminal state and finish time agree |
+| `scan_task` | `status <> 'running' OR started_at IS NOT NULL` | a running task has started |
+| `statement_response` | `(context_type IS NULL) = (context_id IS NULL)` | a context is named and bound together |
+| `report` | `num_nonnulls(source_scan_job_id, source_scan_task_id) = 1` | exactly one source |
+| `report` | `tier = 'technical' OR technical_view IS NULL` | view depth applies to technical reports alone |
+| `api_key` | `revocation_reason IS NULL OR revoked_at IS NOT NULL` | a reason always accompanies a revocation |
+| `audit_event` | `num_nonnulls(payload_encrypted, wrapped_dek, envelope_id, encryption_metadata) IN (0, 4)` | the encrypted-payload column group is all-or-none |
+| `audit_event` | `detail IS NOT NULL OR payload_encrypted IS NOT NULL` | an event carries detail, an encrypted payload, or both |
+
+Uniqueness rules that need a partial or expression index rather than a plain constraint:
+
+- `organization_invitation`: `UNIQUE (organization_id, lower(email)) WHERE accepted_at IS NULL AND revoked_at IS NULL` — one live invitation per organization and normalized address. Expiry cannot sit in an index predicate, so replacing an expired invitation first sets `revoked_at` — the resend rule the API design already states.
+- `statement_response`: `UNIQUE (statement_id, envelope_id) WHERE context_type IS NULL` and `UNIQUE (statement_id, context_type, context_id) WHERE context_type IS NOT NULL` — the two response-uniqueness rules of §5.2.
+
+Stated rules that stay outside `CHECK` reach, enforced by triggers or application logic: the verification target's `asset_type = domain` (§4.2, cross-table), grade presence per test (§8.1, catalog-owned), same-organization foreign keys (§13.1), and `source = manual` requiring a triggering user at creation (§7.1, temporal — erasure may null it later).
 

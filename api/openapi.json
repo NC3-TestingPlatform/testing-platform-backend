@@ -5027,7 +5027,7 @@
           "value": {
             "type": "string",
             "title": "Value",
-            "description": "Canonical IDNA domain without a trailing dot.",
+            "description": "Canonical domain: lowercase IDNA (A-label) form without a trailing dot.",
             "examples": [
               "example.lu"
             ]
@@ -5097,7 +5097,7 @@
           "value": {
             "type": "string",
             "title": "Value",
-            "description": "Canonical IDNA domain without a trailing dot.",
+            "description": "Domain to monitor. Unicode or ASCII input is accepted and canonicalized to lowercase IDNA (A-label) form without a trailing dot.",
             "examples": [
               "example.lu"
             ]
@@ -8177,7 +8177,7 @@
             "type": "array"
           },
           "target": {
-            "description": "Canonical IDNA domain without a trailing dot.",
+            "description": "Domain to scan. Unicode or ASCII input is accepted and canonicalized to lowercase IDNA (A-label) form without a trailing dot.",
             "examples": [
               "example.lu"
             ],

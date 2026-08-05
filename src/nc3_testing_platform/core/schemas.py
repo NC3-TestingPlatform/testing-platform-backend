@@ -7,6 +7,7 @@ contract, and generated clients share one vocabulary.
 from datetime import UTC, datetime
 from typing import Annotated
 
+import idna
 from pydantic import (
     UUID7,
     AfterValidator,
@@ -28,6 +29,30 @@ Timestamp = Annotated[
     AwareDatetime,
     AfterValidator(_normalize_to_utc),
 ]
+
+
+def _parse_domain_name(value: str) -> str:
+    """Canonicalizes a domain to lowercase IDNA A-label form without a trailing dot.
+
+    Accepts Unicode or ASCII input.
+    Raises `ValueError` for anything that does not parse as a domain.
+    """
+    candidate = value[:-1] if value.endswith(".") else value
+    try:
+        canonical = idna.encode(candidate, uts46=True).decode("ascii")
+    except idna.IDNAError as error:
+        raise ValueError(f"Not a valid domain name: {error}") from error
+    if "." not in canonical:
+        raise ValueError("A domain name needs at least two labels.")
+    if len(canonical) > 253:
+        raise ValueError("A domain name is at most 253 characters in A-label form.")
+    return canonical
+
+
+# A domain in canonical form: lowercase IDNA A-labels, no trailing dot. Parsing
+# happens at the boundary, so `asset.value` and the `target_domain` columns never
+# hold a non-canonical spelling that would defeat their uniqueness rules.
+DomainName = Annotated[str, AfterValidator(_parse_domain_name)]
 
 
 class BaseSchema(BaseModel):

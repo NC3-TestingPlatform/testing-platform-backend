@@ -32,6 +32,7 @@ from nc3_testing_platform.core.enums import (
 )
 from nc3_testing_platform.core.schemas import (
     BaseSchema,
+    DomainName,
     ResourceId,
     SeverityCounts,
     Timestamp,
@@ -198,7 +199,7 @@ class ScanTask(BaseSchema):
     )
     classification: ScanClassification
     target_asset_id: ResourceId | None = None
-    target_domain: str | None = Field(
+    target_domain: DomainName | None = Field(
         default=None,
         description="Set for a guest target or a discovered subdomain with no Asset row.",
     )
@@ -267,7 +268,7 @@ class ScanJob(BaseSchema):
         description="Attribution only. Becomes null if the user is erased.",
     )
     asset_id: ResourceId | None = None
-    target_domain: str | None = Field(
+    target_domain: DomainName | None = Field(
         default=None,
         description=(
             "Canonical domain that is not an Asset row. Populated only by an "
@@ -407,8 +408,11 @@ class GuestScanLaunch(_DomainLaunch):
     tests only, which in v4.0 is every domain test.
     """
 
-    target: str = Field(
-        description="Canonical IDNA domain without a trailing dot.",
+    target: DomainName = Field(
+        description=(
+            "Domain to scan. Unicode or ASCII input is accepted and canonicalized "
+            "to lowercase IDNA (A-label) form without a trailing dot."
+        ),
         examples=["example.lu"],
     )
 
