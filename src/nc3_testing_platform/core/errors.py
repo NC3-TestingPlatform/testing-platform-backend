@@ -108,11 +108,28 @@ async def _validation_exception_handler(
     )
 
 
+async def _unhandled_exception_handler(
+    request: Request, exc: Exception
+) -> ProblemResponse:
+    # No `detail`: the exception text is for the server log, never for the client.
+    problem = ProblemDetail(
+        title=HTTPStatus.INTERNAL_SERVER_ERROR.phrase,
+        status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        instance=str(request.url),
+    )
+    return ProblemResponse(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        content=problem.model_dump(mode="json", exclude_none=True),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
-    """Route HTTP + validation errors through the problem+json handlers."""
+    """Route HTTP, validation, and unhandled errors through the problem+json handlers."""
     # `exc` annotations are narrower (more precise), which trips pyright's contravariance check.
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)  # pyright: ignore[reportArgumentType]
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)  # pyright: ignore[reportArgumentType]
+    # Starlette re-raises after this handler responds, so the traceback still reaches the server log.
+    app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 
 def _responses(schema: dict) -> Iterator[dict]:
