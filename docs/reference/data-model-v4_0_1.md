@@ -9,7 +9,7 @@
 Conventions:
 
 - Entity names are singular. Database identifiers use `snake_case`.
-- Primary keys are UUIDs.
+- Primary keys are UUIDv7 values, so primary-key order is creation order; list pagination keysets on `id`.
 - Timestamps use UTC `timestamptz`.
 - Retention is evaluated per data class, processing purpose, lifecycle anchor event, applicable policy version, and disposition at the deadline. No single timestamp is the complete lifecycle model.
 - System-boundary references and copied envelope identifiers without foreign keys are not ER links.
@@ -218,6 +218,7 @@ erDiagram
 
 - Unique constraint: (`organization_id`, `asset_type`, `value`).
 - An Asset is organization-owned. `created_by_user_id` records attribution and does not assign ownership.
+- Deletion is restricted: an asset referenced by scan history or by discovered children answers `409`. Referencing foreign keys restrict, never cascade or set null.
 
 ### 4.2 `domain_verification`
 
@@ -319,7 +320,7 @@ Constraints:
 - When `statement.required_context_type` is null: both context columns are null, and the response is unique on (`statement_id`, `envelope_id`).
 - When `statement.required_context_type` is non-null: `context_type` equals that value, and the response is unique on (`statement_id`, `context_type`, `context_id`).
 - When `context_type = scan_job`: `context_id` identifies a ScanJob, `organization_id` equals the ScanJob organization, and the envelope belongs to the user who submitted the launch at response time.
-- StatementResponse rows are immutable. A correction requires a new Statement version and a new response.
+- StatementResponse rows are immutable. A correction requires a new Statement version and a new response. Application roles have no `UPDATE` or `DELETE` permission on this table.
 - Each StatementResponse is recorded in `audit_event`.
 - User erasure deletes the applicable `user_key_envelope` and the `app_user` row. The StatementResponse remains, but its actor evidence cannot be decrypted, and no user foreign key survives.
 - `statement.response_kind` identifies which action the user performed. `statement_key`, `version`, and `content_hash` identify the exact text.

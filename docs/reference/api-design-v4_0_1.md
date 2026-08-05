@@ -12,7 +12,7 @@
 - Seven operations accept an anonymous caller: `POST /scans`, the three guest scan reads (§2.3), `GET /statements`, `GET /invitations/{token}`, `GET /feeds/{token}`. Every other operation requires an OpenID Connect token or a platform API key and answers `401` without one. `/healthz` and `/readyz` sit outside `/api/v1`.
 - `ScanJob` and `ScanTask` state comes from the API. SSE events are advisory; when an event and a read disagree, the read is correct.
 - Errors use the RFC 9457 Problem Details envelope.
-- Collection endpoints use cursor pagination and stable ordering.
+- Collection endpoints use cursor pagination and stable ordering. Lists order newest first, keyed on the UUIDv7 `id`; the audit log orders by (`chain_id`, `sequence_number`) (§15).
 - Shapes fixed by the generated contract are versioned by the OpenAPI document itself. Three payloads live outside the document and carry their own `schema_version`: scan results, webhook payloads, and notification `data`.
 - The identity provider owns identity, credentials, authentication methods, sessions, MFA enrollment, current assurance, and platform-administrator claims. The application owns its `app_user` projection, organization membership and role, assets, and verification state.
 
@@ -146,6 +146,7 @@ POST   /api/v1/assets/{asset_id}/feeds/{feed_id}/revoke
 
 - An Asset is an organization-owned monitored domain. Creator identity is attribution only.
 - `PATCH` changes `regression_alerts_enabled`, the only mutable property. `value` and `asset_type` are immutable.
+- `DELETE` answers `409` while scan history or discovered children reference the asset.
 
 ### 5.1 Verification
 
