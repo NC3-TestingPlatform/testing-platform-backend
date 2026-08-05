@@ -174,7 +174,7 @@ Rules:
 
 - Only one unexpired, unaccepted, non-revoked invitation may exist for the same organization and normalized email address.
 - The plaintext token is sent in the invitation link and is never stored.
-- Acceptance is atomic. It requires an authenticated user whose verified email matches the invitation and who does not already belong to another organization.
+- Acceptance is atomic. It requires an authenticated user whose verified email matches the invitation and who does not already belong to another organization. It sets `accepted_at` and `accepted_by_user_id` together; the latter may become null through user erasure.
 
 ### 3.5 User erasure treatment
 
@@ -430,7 +430,7 @@ Constraints:
 - `claim_token_hash` is set on an unauthenticated launch and holds the hash of a 256-bit random token returned once to
   the caller. The plaintext is never stored.
 - Claiming is one atomic compare-and-set: the job is an unclaimed guest job, the supplied token hashes to `claim_token_hash`, and `purge_at` has not passed. Success sets `claimed_at`, `claimed_by_user_id`, the ownership fields, and nulls `claim_token_hash`. The same token reads the job before it is claimed, and reading leaves it usable.
-- When `claimed_by_user_id` is set: `organization_id` is the claimed user's organization, and `claimed_at` is not null. For a file ScanJob, the claim also sets `file_upload.organization_id` and `file_upload.uploaded_by_user_id`.
+- A claimed job carries `claimed_at` and an `organization_id`, the organization of the claiming user. `claimed_by_user_id` records who claimed it and may later become null through user erasure. For a file ScanJob, the claim also sets `file_upload.organization_id` and `file_upload.uploaded_by_user_id`.
 - A job containing an intrusive ScanTask requires current `statement_response` rows for both `scan_target_permission` and `intrusive_scan_risk_liability`, each bound to that ScanJob. The responding user is the user who submitted the intrusive launch and belongs to the ScanJob organization.
 
 ### 7.2 `scan_task`
@@ -773,11 +773,11 @@ erDiagram
 
 ## 14. Row-level check constraints
 
-Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Cross-row and cross-table rules stay in §13.
+Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Where §3.5 erasure nulls an attribution column, the pairing is one-way instead: the actor implies the time, never the reverse, so erasing a user cannot violate the constraint. Cross-row and cross-table rules stay in §13.
 
 | Table                           | Constraint                                                                                                                         | Enforces                                                              |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
-| `organization_invitation`       | `(accepted_at IS NULL) = (accepted_by_user_id IS NULL)`                                                                            | acceptance records the actor and the time together                    |
+| `organization_invitation`       | `accepted_by_user_id IS NULL OR accepted_at IS NOT NULL`                                                                           | an acceptance actor implies an acceptance time                        |
 | `asset`                         | `parent_asset_id IS NULL OR origin = 'discovered'`                                                                                 | only discovery produces child assets                                  |
 | `domain_verification_challenge` | `failure_code IS NULL OR last_recheck_at IS NOT NULL`                                                                              | a failure code always follows a recorded check                        |
 | `file_upload`                   | `(purged_at IS NULL) = (storage_key IS NOT NULL)`                                                                                  | the storage reference exists exactly while the bytes do               |
@@ -789,7 +789,8 @@ Every constraint below enforces an invariant already stated in the table section
 | `scan_job`                      | `target_domain IS NULL OR source = 'guest'`                                                                                        | free target text exists only on guest jobs                            |
 | `scan_job`                      | `claim_token_hash IS NULL OR source = 'guest'`                                                                                     | only guest jobs are claimable                                         |
 | `scan_job`                      | `source <> 'guest' OR claimed_at IS NOT NULL OR claim_token_hash IS NOT NULL`                                                      | an unclaimed guest job always holds the claim hash                    |
-| `scan_job`                      | `(claimed_at IS NULL) = (claimed_by_user_id IS NULL)`                                                                              | claiming records the actor and the time together                      |
+| `scan_job`                      | `claimed_by_user_id IS NULL OR claimed_at IS NOT NULL`                                                                             | a claim actor implies a claim time                                    |
+| `scan_job`                      | `claimed_at IS NULL OR organization_id IS NOT NULL`                                                                                | a claimed job always has an organization                              |
 | `scan_job`                      | `claimed_at IS NULL OR claim_token_hash IS NULL`                                                                                   | the hash is discarded on claim                                        |
 | `scan_job`                      | `organization_id IS NOT NULL OR source = 'guest'`                                                                                  | only guest jobs lack an organization                                  |
 | `scan_job`                      | `(status IN ('completed', 'partial', 'failed', 'canceled')) = (finished_at IS NOT NULL)`                                           | terminal state and finish time agree                                  |
