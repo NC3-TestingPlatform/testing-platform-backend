@@ -37,9 +37,8 @@ def _parse_domain_name(value: str) -> str:
     Accepts Unicode or ASCII input.
     Raises `ValueError` for anything that does not parse as a domain.
     """
-    candidate = value[:-1] if value.endswith(".") else value
     try:
-        canonical = idna.encode(candidate, uts46=True).decode("ascii")
+        canonical = idna.encode(value, uts46=True).decode("ascii").removesuffix(".")
     except idna.IDNAError as error:
         raise ValueError(f"Not a valid domain name: {error}") from error
     if "." not in canonical:
