@@ -104,7 +104,7 @@ async def resolve_launch_body(
     selects the authenticated or guest domain variant. If the caller sends a field
     from the wrong access state, validation identifies the correct field.
     """
-    media_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+    media_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     authenticated = bool(oidc or key)
 
     if media_type == MULTIPART_MEDIA_TYPE:
