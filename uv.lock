@@ -502,13 +502,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
-    { name = "httpx2" },
     { name = "idna" },
     { name = "pydantic", extra = ["email"] },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx2" },
     { name = "openapi-spec-validator" },
     { name = "pyright" },
     { name = "pytest" },
@@ -518,13 +518,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.139.2" },
-    { name = "httpx2", specifier = ">=2.9.1" },
     { name = "idna", specifier = ">=3.18" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx2", specifier = ">=2.9.1" },
     { name = "openapi-spec-validator", specifier = ">=0.9.0" },
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },

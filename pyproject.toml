@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.139.2",
-    "httpx2>=2.9.1",
     "idna>=3.18",
     "pydantic[email]>=2.13.4",
 ]
@@ -16,6 +15,7 @@ export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.9.1",
     "openapi-spec-validator>=0.9.0",
     "pyright>=1.1.411",
     "pytest>=9.1.1",
