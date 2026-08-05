@@ -44,10 +44,11 @@ The OpenAPI 3.1 spec is generated from the FastAPI app (`nc3_testing_platform.ma
 
 ```bash
 make export-openapi   # write api/openapi.json
+make lint             # ruff over the source
 make test             # validate it, and check the committed file is current
 ```
 
-Regenerate after any change to a router or Pydantic schema. `api/openapi.json` is the contract the frontend interfaces with; commit it alongside the change that alters it.
+The development routine after any change to a router or Pydantic schema is `make export-openapi && make lint`. `api/openapi.json` is the contract the frontend interfaces with; commit it alongside the change that alters it.
 
 `make test` validates the generated document against OpenAPI 3.1 and fails if the committed file differs from it. CI runs the same command.
 
