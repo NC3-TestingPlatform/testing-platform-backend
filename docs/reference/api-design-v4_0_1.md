@@ -70,7 +70,7 @@ Server rules:
 
 An unauthenticated launch returns the ScanJob state plus `claim_token`: a 256-bit random value, base64url, shown once. Only its hash is stored.
 
-**Reading.** These three operations accept the token as a `claim_token` query parameter and declare no authentication:
+**Reading.** These three operations accept the token as a `claim_token` query parameter, and declare a credential as an alternative to it:
 
 ```http
 GET /api/v1/scans/{scan_id}
