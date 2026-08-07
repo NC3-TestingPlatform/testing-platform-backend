@@ -260,6 +260,7 @@ Constraints:
 Constraints:
 
 - An asset has at most one challenge in progress, and a challenge may exist whether or not the asset is already proven.
+- Creating a challenge replaces the asset's existing challenge row in the same transaction, expired or active, satisfying the unique `asset_id`. Superseded attempts remain in `audit_event`.
 - `record_name` is computed as `_<prefix>-verify.<domain>`, where the vendor prefix is deployment configuration.
 - `verification_token` is the whole record value. A client publishes it verbatim.
 - A challenge whose `token_expires_at` has passed answers no further checks. Reaching that deadline never touches an existing `domain_verification` row.

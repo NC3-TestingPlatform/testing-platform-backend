@@ -173,10 +173,11 @@ Rules:
 - Clients display the returned `record_name` rather than rebuilding it.
 - A challenge expires seven days after issue by default: a verification reads as `expired` once `token_expires_at` has passed with no coverage proven. An asset that is already verified reads as `verified` past that deadline, whatever its challenge is doing.
 - `POST .../token` answers `409` on a verified asset. Re-proving ownership or widening scope starts a new challenge with `POST .../verification`, which leaves `verified_scope` intact until the new challenge succeeds.
+- `POST .../verification` replaces the asset's existing challenge, expired or active. Superseded attempts remain in the audit record.
 - `POST .../checks` sets `challenge.last_recheck_at` whether or not the record was found. A not-found result answers `200` with the challenge still in place and a `failure_code`.
 - Verification statuses are `pending`, `verified`, and `expired`. The status is computed from `verified_scope` and `challenge`, so no request has to reconcile the three of them.
 - `POST .../verification` requires current MFA assurance.
-- Current MFA assurance is read from the identity provider's session or token.
+- Current MFA assurance is read from the identity provider's session or token. An operation that requires it therefore declares only the OpenID Connect scheme: a platform API key carries no assurance.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
 ### 5.2 Feeds
@@ -340,7 +341,7 @@ POST /api/v1/api-keys/{key_id}/revoke
 - `POST /api-keys` returns the plaintext secret once. Only a lookup prefix and a hash are stored.
 - Creation accepts an optional `expires_at`. Absent means no expiry.
 - Revocation is a `POST`. The row is kept with `revoked_at` and `revocation_reason`, and revoked keys stay listed.
-- Every key-management operation consumes current MFA assurance.
+- Creating or revoking a key consumes current MFA assurance, so both operations declare only the OpenID Connect scheme.
 - Erasing an account also revokes and deletes that user's keys.
 - `read_only` permits `GET` operations. `full_scan` is additionally required to launch a scan, which is recorded with `source = api`.
 
