@@ -533,7 +533,7 @@ Constraints:
 | `affected_resource`   | text               | Nullable                                    |
 | `remediation`         | text               | Nullable                                    |
 | `evidence`            | JSONB              | Nullable                                    |
-| `external_references` | JSONB              | Not null; default                           |
+| `external_references` | JSONB              | Not null; default `[]`                      |
 
 - Index: (`scan_result_id`, `check_id`).
 - `finding.status` persists the derived historical-comparison classification with the result projection.

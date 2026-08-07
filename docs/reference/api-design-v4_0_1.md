@@ -150,7 +150,7 @@ POST   /api/v1/assets/{asset_id}/feeds/{feed_id}/revoke
 
 - An Asset is an organization-owned monitored domain. Creator identity is attribution only.
 - `PATCH` changes `regression_alerts_enabled`, the only mutable property. `value` and `asset_type` are immutable.
-- `DELETE` answers `409` while scan history or discovered children reference the asset.
+- `DELETE` answers `409` while scan history, discovered children, a verification, or a feed reference the asset.
 
 ### 5.1 Verification
 
@@ -175,6 +175,7 @@ Rules:
 - `POST .../token` answers `409` on a verified asset. Re-proving ownership or widening scope starts a new challenge with `POST .../verification`, which leaves `verified_scope` intact until the new challenge succeeds.
 - `POST .../checks` sets `challenge.last_recheck_at` whether or not the record was found. A not-found result answers `200` with the challenge still in place and a `failure_code`.
 - Verification statuses are `pending`, `verified`, and `expired`. The status is computed from `verified_scope` and `challenge`, so no request has to reconcile the three of them.
+- `POST .../verification` requires current MFA assurance.
 - Current MFA assurance is read from the identity provider's session or token.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
