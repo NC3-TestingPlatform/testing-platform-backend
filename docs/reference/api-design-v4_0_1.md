@@ -338,7 +338,7 @@ POST /api/v1/api-keys/{key_id}/revoke
 - Creation accepts an optional `expires_at`. Absent means no expiry.
 - Revocation is a `POST`. The row is kept with `revoked_at` and `revocation_reason`, and revoked keys stay listed.
 - Every key-management operation consumes current MFA assurance.
-- Revocation also happens outside this resource: a password change revokes that user's keys, and account erasure revokes and deletes them.
+- Erasing an account also revokes and deletes that user's keys.
 - `read_only` permits `GET` operations. `full_scan` is additionally required to launch a scan, which is recorded with `source = api`.
 
 ## 14. Statements

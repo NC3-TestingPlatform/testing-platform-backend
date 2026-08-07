@@ -91,7 +91,6 @@ async def revoke_api_key(key_id: ResourceId, body: ApiKeyRevoke) -> ApiKey:
     """Stop a key working while keeping its row.
 
     A `POST` rather than a `DELETE`, because `revoked_at` and the reason are the
-    point. Revocation also happens outside this endpoint: changing a password
-    revokes that user's keys, and erasing an account revokes and deletes them.
+    point. Erasing an account also revokes and deletes that user's keys.
     """
     return _sample_key(revoked=True)

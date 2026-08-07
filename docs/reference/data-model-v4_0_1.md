@@ -591,7 +591,6 @@ Rules:
 
 - The plaintext key is never stored.
 - Key-management actions consume current MFA assurance from the identity provider.
-- Password changes revoke user-owned keys.
 - Account erasure revokes and deletes user-owned keys. The revocation stays represented by the audit event.
 
 ```mermaid

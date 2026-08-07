@@ -4195,7 +4195,7 @@
           "api-keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Stop a key working while keeping its row.\n\nA `POST` rather than a `DELETE`, because `revoked_at` and the reason are the\npoint. Revocation also happens outside this endpoint: changing a password\nrevokes that user's keys, and erasing an account revokes and deletes them.",
+        "description": "Stop a key working while keeping its row.\n\nA `POST` rather than a `DELETE`, because `revoked_at` and the reason are the\npoint. Erasing an account also revokes and deletes that user's keys.",
         "operationId": "revoke_api_key_api_v1_api_keys__key_id__revoke_post",
         "security": [
           {
