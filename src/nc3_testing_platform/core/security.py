@@ -76,8 +76,11 @@ Authenticated = Depends(require_authentication)
 def read_optional_credentials(oidc: OidcAuth, key: ApiKeyAuth) -> None:
     """Declares both credentials without requiring either.
 
-    Belongs on an operation that an owner reaches with a credential and a guest
-    reaches with a claim token.
+    The parameter list is the entire effect:
+    FastAPI reads the two credential dependencies and publishes both schemes into the operation's `security`.
+    The empty body is correct — the operation applies no gate, because a guest presents a claim token in place of a credential.
+
+    Belongs on an operation that an owner reaches with a credential and a guest reaches with a claim token.
     """
 
 
