@@ -1099,7 +1099,7 @@
           "assets"
         ],
         "summary": "Delete an asset",
-        "description": "Remove an asset from the inventory.\n\nAnswers `409` while scan history or discovered children reference the asset.",
+        "description": "Remove an asset from the inventory.\n\nAnswers `409` while scan history, discovered children, a verification, a schedule, or a feed reference the asset.",
         "operationId": "delete_asset_api_v1_assets__asset_id__delete",
         "security": [
           {
