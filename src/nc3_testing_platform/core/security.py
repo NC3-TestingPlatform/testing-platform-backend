@@ -47,7 +47,8 @@ api_key = APIKeyHeader(
     description=(
         "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` "
         "and `full_scan`. A scan launched with a key is recorded with "
-        "`source = api`. Key management consumes current MFA assurance."
+        "`source = api`. Creating or revoking a key requires an OpenID Connect "
+        "token with current MFA assurance."
     ),
 )
 
@@ -55,14 +56,14 @@ OidcAuth = Annotated[str | None, Depends(oidc)]
 ApiKeyAuth = Annotated[str | None, Depends(api_key)]
 
 
-def require_authentication(oidc: OidcAuth, key: ApiKeyAuth) -> None:
+def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
     """Reject a caller presenting neither credential.
 
     Belongs on the operation.
     `POST /scans` accepts anonymous callers, and a guest reads their own scan
     with a token instead of a credential.
     """
-    if not (oidc or key):
+    if not (oidc_token or key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Present an OpenID Connect token or a platform API key.",
@@ -73,12 +74,29 @@ def require_authentication(oidc: OidcAuth, key: ApiKeyAuth) -> None:
 Authenticated = Depends(require_authentication)
 
 
-def read_optional_credentials(oidc: OidcAuth, key: ApiKeyAuth) -> None:
+def require_oidc_token(oidc_token: OidcAuth) -> None:
+    """Rejects a caller without an OpenID Connect token.
+
+    Belongs on an operation that consumes current MFA assurance.
+    Assurance is read from the identity provider's token, so a platform API key cannot satisfy the gate and the operation declares only the OIDC scheme.
+    """
+    if not oidc_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Present an OpenID Connect token carrying current MFA assurance.",
+        )
+
+
+# Attach as `dependencies=[MfaGated]` on an operation.
+MfaGated = Depends(require_oidc_token)
+
+
+def read_optional_credentials(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
     """Declares both credentials without requiring either.
 
     The parameter list is the entire effect:
     FastAPI reads the two credential dependencies and publishes both schemes into the operation's `security`.
-    The empty body is correct — the operation applies no gate, because a guest presents a claim token in place of a credential.
+    The body applies no gate, because a guest presents a claim token in place of a credential.
 
     Belongs on an operation that an owner reaches with a credential and a guest reaches with a claim token.
     """

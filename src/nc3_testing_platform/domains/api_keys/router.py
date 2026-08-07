@@ -13,7 +13,7 @@ from nc3_testing_platform.core.enums import ApiKeyScope
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import Authenticated, MfaGated
 from nc3_testing_platform.domains.api_keys.schemas import (
     ApiKey,
     ApiKeyCreate,
@@ -67,7 +67,7 @@ async def list_api_keys(page: CursorPage) -> Page[ApiKey]:
     status_code=status.HTTP_201_CREATED,
     summary="Create an API key",
     responses=problem_responses(401, 403, 422),
-    dependencies=[Authenticated],
+    dependencies=[MfaGated],
 )
 async def create_api_key(body: ApiKeyCreate) -> ApiKeyCreated:
     """Issue a key and return its secret once.
@@ -85,7 +85,7 @@ async def create_api_key(body: ApiKeyCreate) -> ApiKeyCreated:
     "/{key_id}/revoke",
     summary="Revoke an API key",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[MfaGated],
 )
 async def revoke_api_key(key_id: ResourceId, body: ApiKeyRevoke) -> ApiKey:
     """Stop a key working while keeping its row.

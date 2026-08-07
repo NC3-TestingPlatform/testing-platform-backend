@@ -1363,9 +1363,6 @@
         "security": [
           {
             "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
           }
         ],
         "parameters": [
@@ -4157,9 +4154,6 @@
         "security": [
           {
             "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
           }
         ],
         "requestBody": {
@@ -4227,9 +4221,6 @@
         "security": [
           {
             "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
           }
         ],
         "parameters": [
@@ -8347,7 +8338,7 @@
       },
       "ApiKey": {
         "type": "apiKey",
-        "description": "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` and `full_scan`. A scan launched with a key is recorded with `source = api`. Key management consumes current MFA assurance.",
+        "description": "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` and `full_scan`. A scan launched with a key is recorded with `source = api`. Creating or revoking a key requires an OpenID Connect token with current MFA assurance.",
         "in": "header",
         "name": "Authorization"
       }

@@ -11,7 +11,7 @@ from nc3_testing_platform.core.enums import VerificationStatus
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import Authenticated, MfaGated
 from nc3_testing_platform.domains.assets import examples
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
@@ -130,7 +130,7 @@ async def get_verification(asset_id: ResourceId) -> DomainVerification:
     status_code=status.HTTP_201_CREATED,
     summary="Start a verification challenge",
     responses=problem_responses(401, 403, 404, 409, 422),
-    dependencies=[Authenticated],
+    dependencies=[MfaGated],
 )
 async def create_verification(
     asset_id: ResourceId, body: VerificationCreate

@@ -1,6 +1,7 @@
 """Closed enumerations of the v4 contract.
 
-Every enum mirrors a PostgreSQL enum type in the data model.
+Every enum mirrors a PostgreSQL enum type in the data model, with two exceptions.
+`VerificationStatus` and `TrendDirection` are computed at read time from stored rows and have no column of their own.
 
 Absent or deferred values:
 - `report_format` has no Atom member. RSS and Atom belong to `feed_format`, which
