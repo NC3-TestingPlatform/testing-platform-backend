@@ -35,7 +35,9 @@ POST /api/v1/scans/{scan_id}/claim
 - **Registered
   user:** carries `asset_id`. The Asset must belong to the caller's organization. Carrying `target` answers `422`.
 -
+
 **Guest:** carries `target`, a domain as free text — the only place in the API where free target text exists. The server canonicalizes it to lowercase IDNA (A-label) form without a trailing dot; text that does not parse as a domain answers `422`. Carrying `asset_id` answers `422`. Limited to non-intrusive tests. Anti-abuse gates apply. Persisted in `scan_job.target_domain` with no organization until claimed (§2.3).
+
 - Both variants carry `modules`, a list of one or more. Requesting the `file` module answers `422`.
 - Both variants may carry `module_configuration`. Each module defines its own option shape; the web module's subdomain-discovery option is one example.
 - Neither variant accepts file data.
@@ -211,7 +213,7 @@ GET  /api/v1/feeds/{token}
 
 ### 7.1 Reports
 
-`POST /reports` accepts exactly one source: `scan_job_id` or `scan_task_id`. It renders synchronously and returns the document in the response body, with the media type matching the requested `format`:
+`POST /reports` accepts exactly one source: `source_scan_job_id` or `source_scan_task_id`. It renders synchronously and returns the document in the response body, with the media type matching the requested `format`:
 
 | `format` | Response media type                                                       |
 |----------|---------------------------------------------------------------------------|
