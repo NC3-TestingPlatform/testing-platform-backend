@@ -98,7 +98,7 @@ async def update_asset(asset_id: ResourceId, body: AssetUpdate) -> Asset:
 async def delete_asset(asset_id: ResourceId) -> Response:
     """Remove an asset from the inventory.
 
-    Answers `409` while scan history or discovered children reference the asset.
+    Answers `409` while scan history, discovered children, a verification, a schedule, or a feed reference the asset.
     """
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
