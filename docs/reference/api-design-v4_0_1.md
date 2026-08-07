@@ -150,7 +150,7 @@ POST   /api/v1/assets/{asset_id}/feeds/{feed_id}/revoke
 
 - An Asset is an organization-owned monitored domain. Creator identity is attribution only.
 - `PATCH` changes `regression_alerts_enabled`, the only mutable property. `value` and `asset_type` are immutable.
-- `DELETE` answers `409` while scan history, discovered children, a verification, or a feed reference the asset.
+- `DELETE` answers `409` while scan history, discovered children, a verification, a schedule, or a feed reference the asset.
 
 ### 5.1 Verification
 
