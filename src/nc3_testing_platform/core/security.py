@@ -72,6 +72,20 @@ def require_authentication(oidc: OidcAuth, key: ApiKeyAuth) -> None:
 # Attach as `dependencies=[Authenticated]` on an operation.
 Authenticated = Depends(require_authentication)
 
+
+def read_optional_credentials(oidc: OidcAuth, key: ApiKeyAuth) -> None:
+    """Declares both credentials without requiring either.
+
+    Belongs on an operation that an owner reaches with a credential and a guest
+    reaches with a claim token.
+    """
+
+
+# Attach as `dependencies=[OptionallyAuthenticated]`, together with
+# ANONYMOUS_ALTERNATIVE in `openapi_extra`, so the operation declares both schemes
+# and the anonymous alternative.
+OptionallyAuthenticated = Depends(read_optional_credentials)
+
 # Adds the anonymous alternative to an operation's `security`, marking it callable
 # without credentials.
 ANONYMOUS_ALTERNATIVE: list[dict[str, list[str]]] = [{}]

@@ -210,6 +210,15 @@
         "summary": "Get a scan with its task snapshot",
         "description": "The authoritative job and task state.\n\nFetch this before subscribing to the event stream and again after reconnection\nor whenever an applied event leaves the client uncertain.",
         "operationId": "get_scan_api_v1_scans__scan_id__get",
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          },
+          {}
+        ],
         "parameters": [
           {
             "name": "scan_id",
@@ -355,6 +364,15 @@
         "summary": "Get scan results",
         "description": "One result per completed task.\n\nNot paginated: the collection is bounded by the job's task count, which the\nexecutable-test catalog caps well below a page.",
         "operationId": "get_scan_results_api_v1_scans__scan_id__results_get",
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          },
+          {}
+        ],
         "parameters": [
           {
             "name": "scan_id",
@@ -431,6 +449,15 @@
         "summary": "Stream live scan progress",
         "description": "Advisory server-sent events for a running scan.\n\nDatabase state is authoritative; these events only reduce latency.\nThe snapshot is the only recovery for missed events: refetch it after a reconnect.",
         "operationId": "stream_scan_events_api_v1_scans__scan_id__events_get",
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          },
+          {}
+        ],
         "parameters": [
           {
             "name": "scan_id",

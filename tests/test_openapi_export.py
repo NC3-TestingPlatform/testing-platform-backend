@@ -87,6 +87,35 @@ def test_anonymous_operations_are_exactly_the_documented_set(
     assert anonymous == ANONYMOUS_OPERATIONS
 
 
+def test_claim_token_operations_declare_credential_and_anonymous_alternatives(
+    spec: dict[str, Any],
+) -> None:
+    """An operation reading `claim_token` declares the credential schemes and the anonymous alternative.
+
+    The routers attach the two declarations separately — the schemes through a dependency, the empty requirement through `openapi_extra` — so this asserts the pairing that neither attachment enforces alone.
+    """
+    checked = set()
+    for path, item in spec["paths"].items():
+        shared = item.get("parameters", [])
+        for method, operation in item.items():
+            if method not in _METHODS:
+                continue
+            parameters = shared + operation.get("parameters", [])
+            if not any(p.get("name") == "claim_token" for p in parameters):
+                continue
+            checked.add((path, method))
+            label = f"{method.upper()} {path}"
+            security = operation.get("security") or []
+            schemes = {name for requirement in security for name in requirement}
+            assert {"OpenIdConnect", "ApiKey"} <= schemes, (
+                f"{label} accepts claim_token but omits a credential alternative"
+            )
+            assert any(not requirement for requirement in security), (
+                f"{label} accepts claim_token but omits the anonymous alternative"
+            )
+    assert checked, "no operation reads claim_token; retarget or remove this test"
+
+
 def test_error_responses_use_problem_details(spec: dict[str, Any]) -> None:
     """Error responses carry `application/problem+json`, per RFC 9457."""
     for path, item in spec["paths"].items():

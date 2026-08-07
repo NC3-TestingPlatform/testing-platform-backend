@@ -23,6 +23,7 @@ from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     ANONYMOUS_ALTERNATIVE,
     Authenticated,
+    OptionallyAuthenticated,
     rate_limited,
 )
 from nc3_testing_platform.domains.scans import examples
@@ -171,6 +172,8 @@ async def list_scans(page: CursorPage) -> Page[ScanJob]:
     "/{scan_id}",
     summary="Get a scan with its task snapshot",
     responses=problem_responses(404),
+    dependencies=[OptionallyAuthenticated],
+    openapi_extra={"security": ANONYMOUS_ALTERNATIVE},
 )
 async def get_scan(
     scan_id: ResourceId, claim_token: ScanAccessToken = None
@@ -189,6 +192,8 @@ async def get_scan(
     "/{scan_id}/results",
     summary="Get scan results",
     responses=problem_responses(404),
+    dependencies=[OptionallyAuthenticated],
+    openapi_extra={"security": ANONYMOUS_ALTERNATIVE},
 )
 async def get_scan_results(
     scan_id: ResourceId, claim_token: ScanAccessToken = None
@@ -206,6 +211,8 @@ async def get_scan_results(
     summary="Stream live scan progress",
     response_class=StreamingResponse,
     responses={**_EVENT_STREAM_RESPONSE, **problem_responses(404)},
+    dependencies=[OptionallyAuthenticated],
+    openapi_extra={"security": ANONYMOUS_ALTERNATIVE},
 )
 async def stream_scan_events(
     scan_id: ResourceId, claim_token: ScanAccessToken = None

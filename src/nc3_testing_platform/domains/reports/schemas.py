@@ -46,6 +46,12 @@ class ReportRequest(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _technical_view_requires_technical_tier(self) -> "ReportRequest":
+        if self.technical_view is not None and self.tier is not ReportTier.TECHNICAL:
+            raise ValueError("`technical_view` applies only to the technical tier.")
+        return self
+
 
 class Report(BaseSchema):
     """Provenance metadata for one generated report.
