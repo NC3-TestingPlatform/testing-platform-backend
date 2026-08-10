@@ -34,7 +34,11 @@ _T1 = datetime(2026, 7, 31, 9, 1, 12, tzinfo=UTC)
 
 # The challenge is younger than the proof: its answer window must still be open at
 # the _T1 recheck, or a `pending` sample would carry an unanswerable challenge.
+# VERIFICATION_TOKEN_TTL is env-configurable, so the invariant is asserted rather
+# than assumed — a TTL short enough to close the window fails at import.
 _CHALLENGE_REQUESTED_AT = datetime(2026, 7, 28, 8, 30, tzinfo=UTC)
+assert _CHALLENGE_REQUESTED_AT + VERIFICATION_TOKEN_TTL > _T1
+
 _FEED_REVOKED_AT = datetime(2026, 7, 31, 10, 0, tzinfo=UTC)
 
 _SUBDOMAIN_ASSET_ID = UUID("019ee1a3-0011-7a22-8b33-4c44d5e66f77")
