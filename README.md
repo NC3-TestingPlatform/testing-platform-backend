@@ -8,12 +8,14 @@ Project repository for the NC3 Testing Platform backend (v4).
 
 - Python 3.13, [uv](https://docs.astral.sh/uv/) (packaging + virtualenv)
 - FastAPI + Pydantic — the app and its request/response models
+- Celery + RabbitMQ (broker) + Redis (result backend) — the task queues, one per egress profile
+- PostgreSQL + psycopg — persistence (mock artifact only, until the ORM lands)
+- Docker Compose — the local stack and the Dokploy deployment
 - pytest + openapi-spec-validator (dev) — the contract test suite
 
 **Projected** — planned:
 
 - SQLAlchemy 2.0 + Alembic — persistence + migrations
-- PostgreSQL
 
 # Getting started
 
@@ -23,7 +25,13 @@ Requires **Python ≥ 3.13** and **[uv](https://docs.astral.sh/uv/)**. Install d
 uv sync
 ```
 
-No environment variables or config are required yet.
+Every setting has a working default, so nothing needs configuring on a fresh clone. To change one, copy the template and edit:
+
+```bash
+cp .env.example .env
+```
+
+Compose picks `.env` up automatically; `make dev` passes it to the host-run API.
 
 # Running the mock server
 
@@ -37,6 +45,30 @@ make dev
 - Health probes: http://localhost:8000/healthz, `/readyz`
 
 Handlers return static stub data, so the running server doubles as a mock the frontend can develop against.
+
+# Running the full stack (Compose)
+
+```bash
+make up      # build and start everything, detached
+make logs    # follow logs
+make down    # stop
+```
+
+`docker compose up` starts the API (http://localhost:8000), PostgreSQL, Redis, RabbitMQ, the Celery workers (one per egress queue) and beat, plus a development identity provider. The root `docker-compose.yml` is an index of `include:`s; each service is defined in its own file under `infra/compose/`.
+
+To see a job round-trip through the stack — RabbitMQ to the workers to a row in PostgreSQL:
+
+```bash
+make scan DOMAIN=example.com
+```
+
+This dispatches the mock `scan.dispatch` task: it fans out to mock modules on the scan queue, each reports step progress to the Redis result backend, and the collected findings persist as one row in the throwaway `scan_artifacts` table (replaced by the real ORM models and migrations).
+
+Workers refuse to start if their image is missing the external binaries their queue requires (`worker/preflight.py`), and report health by pinging their own control queue.
+
+# Deploying with Dokploy
+
+`docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
 
 # Generating the OpenAPI contract
 

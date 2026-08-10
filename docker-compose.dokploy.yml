@@ -1,0 +1,163 @@
+# Deployment stack for Dokploy.
+#
+# Deliberately one self-contained file rather than the include tree the local
+# stack uses: a deployment definition should be reviewable on one page, and it
+# diverges from development on exactly the points below rather than by accident.
+#   - No host port publishing. Only the API is reachable, through Dokploy's
+#     reverse proxy on the external dokploy-network; everything else stays
+#     internal to the default project network.
+#   - No development identity provider. The platform is the default IdP; an
+#     external OIDC provider is opt-in and configured through the environment.
+#   - No default credentials. Every secret is `:?`-required, so a deployment
+#     that forgot to set one refuses to start instead of running open.
+#
+# Environment values come from the Dokploy application's environment tab.
+
+name: nc3-testing-platform
+
+x-worker: &worker
+  restart: unless-stopped
+  environment: &worker-env
+    CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-100}
+    SCAN_TASK_TIMEOUT_SECONDS: ${SCAN_TASK_TIMEOUT_SECONDS:-120}
+    SCAN_JOB_TIMEOUT_SECONDS: ${SCAN_JOB_TIMEOUT_SECONDS:-900}
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  stop_grace_period: 120s
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+      REDIS_URL: redis://redis:6379/0
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+    expose:
+      - "8000"
+    networks:
+      - dokploy-network
+      - default
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:18.4-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-nc3_testing_platform}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s
+
+  redis:
+    image: redis:8-trixie
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    stop_grace_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:4.3-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?}
+      RABBITMQ_COOKIE: ${RABBITMQ_COOKIE:?}
+    # Seed the Erlang cookie before anything boots; without this, first start
+    # races two VMs creating it and can wedge the volume on a truncated cookie
+    # (see infra/compose/rabbitmq.yml for the full story).
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        [ -s /var/lib/rabbitmq/.erlang.cookie ] ||
+        { echo "$$RABBITMQ_COOKIE" > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 600 /var/lib/rabbitmq/.erlang.cookie; };
+        exec docker-entrypoint.sh rabbitmq-server
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      # Permits the deprecated queue type Celery's control channel still uses; see the file.
+      - ./infra/compose/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-celery.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 60s
+
+  worker-non-intrusive-scan:
+    <<: *worker
+    build:
+      context: .
+      target: worker-non-intrusive-scan
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=non-intrusive-scan", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=non-intrusive-scan@%h"]
+
+  worker-intrusive-scan:
+    <<: *worker
+    build:
+      context: .
+      target: worker-intrusive-scan
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=intrusive-scan", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=intrusive-scan@%h"]
+
+  worker-file-analysis:
+    <<: *worker
+    build:
+      context: .
+      target: worker-file-analysis
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=file-analysis", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=file-analysis@%h"]
+
+  worker-platform:
+    <<: *worker
+    build:
+      context: .
+      target: worker-platform
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=platform", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=platform@%h"]
+
+  beat:
+    <<: *worker
+    build:
+      context: .
+      target: worker-platform
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/beat-schedule"]
+    volumes:
+      - beat-schedule:/var/lib/celery
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  beat-schedule:
