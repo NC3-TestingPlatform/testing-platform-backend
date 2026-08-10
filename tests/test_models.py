@@ -1,4 +1,4 @@
-"""Structural tests of the ORM against data-model-v4_0_1.md.
+"""Structural tests of the ORM against data-model-v4_0_2.md.
 
 No database: the metadata itself is checked — the table inventory of the doc,
 the §1 conventions (UUIDv7 primary keys named `id`, timestamptz everywhere),
@@ -70,11 +70,13 @@ EXPECTED_CHECKS: dict[str, dict[str, str]] = {
             "uploaded_by_user_id IS NULL OR organization_id IS NOT NULL"
         ),
         "purge_within_24_hours": "purge_due_at <= uploaded_at + interval '24 hours'",
+        "purge_not_before_upload": "purge_due_at >= uploaded_at",
     },
     "scan_job": {
         "one_launch_target": (
             "num_nonnulls(asset_id, target_domain, file_upload_id) = 1"
         ),
+        "modules_not_empty": "cardinality(modules) >= 1",
         "schedule_provenance": "(source = 'schedule') = (schedule_id IS NOT NULL)",
         "api_key_provenance": "(source = 'api') = (api_key_id IS NOT NULL)",
         "guest_only_target_text": "target_domain IS NULL OR source = 'guest'",
@@ -117,6 +119,9 @@ EXPECTED_CHECKS: dict[str, dict[str, str]] = {
         ),
         "running_has_start": "status <> 'running' OR started_at IS NOT NULL",
     },
+    "schedule": {
+        "modules_not_empty": "cardinality(modules) >= 1",
+    },
     "statement_response": {
         "context_named_and_bound": "(context_type IS NULL) = (context_id IS NULL)",
     },
@@ -135,6 +140,7 @@ EXPECTED_CHECKS: dict[str, dict[str, str]] = {
             "encryption_metadata) IN (0, 4)"
         ),
         "detail_or_payload": "detail IS NOT NULL OR payload_encrypted IS NOT NULL",
+        "retention_not_before_occurrence": "retention_until >= occurred_at",
     },
 }
 

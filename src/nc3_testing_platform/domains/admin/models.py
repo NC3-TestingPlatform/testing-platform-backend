@@ -36,6 +36,11 @@ class AuditEvent(Base):
             "detail IS NOT NULL OR payload_encrypted IS NOT NULL",
             name="detail_or_payload",
         ),
+        # §14: retention never ends before the event occurred.
+        sa.CheckConstraint(
+            "retention_until >= occurred_at",
+            name="retention_not_before_occurrence",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
