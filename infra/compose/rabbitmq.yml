@@ -1,0 +1,45 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.3-management-alpine
+    extends:
+      file: common.yml
+      service: defaults
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-rabbitmq}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitmq}
+      RABBITMQ_COOKIE: ${RABBITMQ_COOKIE:-DevOnlyRabbitCookie0123456789}
+    # Seed the Erlang cookie before anything boots. Erlang creates a missing
+    # cookie file lazily and non-atomically; on first start two VMs (prelaunch
+    # and server) race to create it, one can read the other's half-written file,
+    # and the truncated cookie then persists in the volume as a permanent
+    # "Too short cookie string" crash loop. -s also repairs such a volume.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        [ -s /var/lib/rabbitmq/.erlang.cookie ] ||
+        { echo "$$RABBITMQ_COOKIE" > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 600 /var/lib/rabbitmq/.erlang.cookie; };
+        exec docker-entrypoint.sh rabbitmq-server
+    ports:
+      # Loopback only: development credentials must not answer on LAN interfaces.
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      # Management UI, the -management tag's reason for being.
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      # Permits the deprecated queue type Celery's control channel still uses; see the file.
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-celery.conf:ro
+    healthcheck:
+      # The image ships no HEALTHCHECK.
+      # check_port_connectivity matches what a consumer waits for: listeners accepting, not merely the runtime alive.
+      # Every CLI probe pays an Erlang distribution join, so the interval stays wide.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 60s
+
+volumes:
+  rabbitmq-data:

@@ -1,0 +1,20 @@
+# The virtual environment is built for the host platform and must not reach
+# the image; the build creates its own.
+.venv
+
+.git
+.github
+.idea
+.junie
+.claude
+.codex
+.remember
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+docs
+tests
+api
+migrations

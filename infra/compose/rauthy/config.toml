@@ -1,0 +1,35 @@
+# Development-only identity provider.
+# Rauthy requires this file, even when every value is supplied through the environment.
+#
+# Values here are the fallbacks; the environment variables set in `infra/compose/rauthy.yml` override them.
+# Nothing in this file is a secret worth protecting: production deployments supply their own values through the environment.
+
+[server]
+scheme = 'http'
+# Host and port must match the Origin header the browser sends, or the login form is refused as cross-origin.
+# Non-standard ports are part of the value.
+pub_url = 'localhost:8080'
+
+[cluster]
+# Hiqlite is the embedded database and runs a Raft node even alone, so a single-node deployment still needs an id and a one-member cluster.
+node_id = 1
+nodes = ['1 localhost:8100 localhost:8200']
+secret_raft = 'DevOnlyRaftSecret0123456789'
+secret_api = 'DevOnlyApiSecret0123456789'
+
+[encryption]
+# Key id, a slash, then a base64 32-byte key.
+# Dropping an id that encrypted stored data makes that data unreadable, so old ids stay in the list.
+keys = ['dev/hXv9vS0awyIXqCmObQqHcZkiVoWeI+MoE/5ABoY9trM=']
+key_active = 'dev'
+
+[webauthn]
+# Passkeys are bound to this host.
+# A credential registered here stops working if the id changes, so it tracks `pub_url`.
+rp_id = 'localhost'
+rp_origin = 'http://localhost:8080'
+rp_name = 'NC3 Testing Platform (dev)'
+
+[bootstrap]
+admin_email = 'admin@localhost'
+password_plain = 'DevAdmin.123456'
