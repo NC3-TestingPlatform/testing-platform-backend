@@ -9,8 +9,10 @@ A schedule creates ScanJob rows and stores no results of its own.
 """
 
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from dateutil.rrule import rrulestr
+from pydantic import BaseModel, Field, field_validator
 
 from nc3_testing_platform.core.enums import ScanModule
 from nc3_testing_platform.core.schemas import BaseSchema, ResourceId, Timestamp
@@ -23,6 +25,39 @@ _TIMEZONE_DESCRIPTION = (
     "IANA timezone the rule is evaluated in, e.g. `Europe/Luxembourg`. Stored "
     "separately from the rule so local run times survive daylight-saving changes."
 )
+
+
+def _valid_recurrence_rule(value: str | None) -> str | None:
+    """Reject anything the RFC 5545 grammar cannot parse, at the boundary.
+
+    Accepting free text here would store rules the scheduler discovers to be
+    garbage only when it tries to compute the next run.
+    """
+    if value is None:
+        return None
+    # One bare rule only: rrulestr also swallows RRULE:/DTSTART/EXDATE lines
+    # and whole multi-line rule sets, which are not what this field stores.
+    if any(character in value for character in ":\r\n"):
+        raise ValueError(
+            "Provide a single bare RRULE without the `RRULE:` prefix or other "
+            "calendar properties."
+        )
+    try:
+        rrulestr(value)
+    except (ValueError, TypeError, KeyError, IndexError) as exc:
+        raise ValueError(f"Not a valid RFC 5545 recurrence rule: {exc}") from exc
+    return value
+
+
+def _valid_timezone(value: str | None) -> str | None:
+    """Reject timezone names absent from the IANA database."""
+    if value is None:
+        return None
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"Not an IANA timezone identifier: {value!r}") from exc
+    return value
 
 
 class Schedule(BaseSchema):
@@ -63,6 +98,9 @@ class ScheduleCreate(BaseModel):
     timezone: str = Field(description=_TIMEZONE_DESCRIPTION)
     enabled: bool = True
 
+    _rrule_parses = field_validator("recurrence_rule")(_valid_recurrence_rule)
+    _timezone_exists = field_validator("timezone")(_valid_timezone)
+
 
 class ScheduleUpdate(BaseModel):
     """Partial update. Omitted fields are left alone.
@@ -78,3 +116,6 @@ class ScheduleUpdate(BaseModel):
     )
     timezone: str | None = Field(default=None, description=_TIMEZONE_DESCRIPTION)
     enabled: bool | None = None
+
+    _rrule_parses = field_validator("recurrence_rule")(_valid_recurrence_rule)
+    _timezone_exists = field_validator("timezone")(_valid_timezone)
