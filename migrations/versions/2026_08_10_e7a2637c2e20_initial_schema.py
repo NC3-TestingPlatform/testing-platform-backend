@@ -1,6 +1,6 @@
 """initial schema.
 
-Revision: 7d23f495f04b
+Revision: e7a2637c2e20
 Revises: 
 """
 from collections.abc import Sequence
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = '7d23f495f04b'
+revision: str = 'e7a2637c2e20'
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -55,6 +55,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_app_user')),
     sa.UniqueConstraint('identity_subject', name=op.f('uq_app_user_identity_subject'))
     )
+    op.create_index(op.f('ix_app_user_organization_id'), 'app_user', ['organization_id'], unique=False)
     op.create_table('audit_event',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -78,6 +79,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_audit_event')),
     sa.UniqueConstraint('chain_id', 'sequence_number', name=op.f('uq_audit_event_chain_id_sequence_number'))
     )
+    op.create_index(op.f('ix_audit_event_organization_id'), 'audit_event', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_audit_event_retention_until'), 'audit_event', ['retention_until'], unique=False)
     op.create_table('statement_response',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -94,6 +97,8 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['statement_id'], ['statement.id'], name=op.f('fk_statement_response_statement_id_statement')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_statement_response'))
     )
+    op.create_index(op.f('ix_statement_response_organization_id'), 'statement_response', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_statement_response_statement_id'), 'statement_response', ['statement_id'], unique=False)
     op.create_index('uq_statement_response_account_level', 'statement_response', ['statement_id', 'envelope_id'], unique=True, postgresql_where=sa.text('context_type IS NULL'))
     op.create_index('uq_statement_response_contextual', 'statement_response', ['statement_id', 'context_type', 'context_id'], unique=True, postgresql_where=sa.text('context_type IS NOT NULL'))
     op.create_table('api_key',
@@ -110,13 +115,16 @@ def upgrade() -> None:
     sa.Column('revocation_reason', sa.Text(), nullable=True),
     sa.Column('last_used_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.CheckConstraint('revocation_reason IS NULL OR revoked_at IS NOT NULL', name=op.f('ck_api_key_reason_accompanies_revocation')),
+    sa.CheckConstraint('revocation_reason IS NULL OR revoked_at IS NOT NULL', name=op.f('ck_api_key_reason_implies_revocation')),
     sa.ForeignKeyConstraint(['created_by_user_id'], ['app_user.id'], name=op.f('fk_api_key_created_by_user_id_app_user'), ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['organization_id'], ['organization.id'], name=op.f('fk_api_key_organization_id_organization')),
     sa.ForeignKeyConstraint(['owner_user_id'], ['app_user.id'], name=op.f('fk_api_key_owner_user_id_app_user'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_api_key')),
     sa.UniqueConstraint('key_prefix', name=op.f('uq_api_key_key_prefix'))
     )
+    op.create_index(op.f('ix_api_key_created_by_user_id'), 'api_key', ['created_by_user_id'], unique=False)
+    op.create_index(op.f('ix_api_key_organization_id'), 'api_key', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_api_key_owner_user_id'), 'api_key', ['owner_user_id'], unique=False)
     op.create_table('asset',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -135,6 +143,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_asset')),
     sa.UniqueConstraint('organization_id', 'asset_type', 'value', name=op.f('uq_asset_organization_id_asset_type_value'))
     )
+    op.create_index(op.f('ix_asset_created_by_user_id'), 'asset', ['created_by_user_id'], unique=False)
+    op.create_index(op.f('ix_asset_parent_asset_id'), 'asset', ['parent_asset_id'], unique=False)
     op.create_table('file_upload',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -155,6 +165,9 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['uploaded_by_user_id'], ['app_user.id'], name=op.f('fk_file_upload_uploaded_by_user_id_app_user'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_file_upload'))
     )
+    op.create_index(op.f('ix_file_upload_organization_id'), 'file_upload', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_file_upload_purge_due_at'), 'file_upload', ['purge_due_at'], unique=False)
+    op.create_index(op.f('ix_file_upload_uploaded_by_user_id'), 'file_upload', ['uploaded_by_user_id'], unique=False)
     op.create_table('notification',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('user_id', sa.Uuid(), nullable=False),
@@ -166,6 +179,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['user_id'], ['app_user.id'], name=op.f('fk_notification_user_id_app_user'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_notification'))
     )
+    op.create_index(op.f('ix_notification_user_id'), 'notification', ['user_id'], unique=False)
     op.create_table('organization_invitation',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -185,6 +199,9 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_organization_invitation')),
     sa.UniqueConstraint('token_hash', name=op.f('uq_organization_invitation_token_hash'))
     )
+    op.create_index(op.f('ix_organization_invitation_accepted_by_user_id'), 'organization_invitation', ['accepted_by_user_id'], unique=False)
+    op.create_index(op.f('ix_organization_invitation_invited_by_user_id'), 'organization_invitation', ['invited_by_user_id'], unique=False)
+    op.create_index(op.f('ix_organization_invitation_organization_id'), 'organization_invitation', ['organization_id'], unique=False)
     op.create_index('uq_organization_invitation_live_email', 'organization_invitation', ['organization_id', sa.literal_column('lower(email)')], unique=True, postgresql_where=sa.text('accepted_at IS NULL AND revoked_at IS NULL'))
     op.create_table('organization_webhook',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -199,6 +216,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_organization_webhook')),
     sa.UniqueConstraint('organization_id', name=op.f('uq_organization_webhook_organization_id'))
     )
+    op.create_index(op.f('ix_organization_webhook_created_by_user_id'), 'organization_webhook', ['created_by_user_id'], unique=False)
     op.create_table('report',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -216,6 +234,8 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['organization_id'], ['organization.id'], name=op.f('fk_report_organization_id_organization')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_report'))
     )
+    op.create_index(op.f('ix_report_generated_by_user_id'), 'report', ['generated_by_user_id'], unique=False)
+    op.create_index(op.f('ix_report_organization_id'), 'report', ['organization_id'], unique=False)
     op.create_table('asset_feed',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -231,6 +251,10 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['organization_id'], ['organization.id'], name=op.f('fk_asset_feed_organization_id_organization')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_asset_feed'))
     )
+    op.create_index(op.f('ix_asset_feed_asset_id'), 'asset_feed', ['asset_id'], unique=False)
+    op.create_index(op.f('ix_asset_feed_created_by_user_id'), 'asset_feed', ['created_by_user_id'], unique=False)
+    op.create_index(op.f('ix_asset_feed_organization_id'), 'asset_feed', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_asset_feed_token_hash'), 'asset_feed', ['token_hash'], unique=False)
     op.create_table('domain_verification',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -242,6 +266,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_domain_verification')),
     sa.UniqueConstraint('asset_id', name=op.f('uq_domain_verification_asset_id'))
     )
+    op.create_index(op.f('ix_domain_verification_organization_id'), 'domain_verification', ['organization_id'], unique=False)
     op.create_table('domain_verification_challenge',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -262,6 +287,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_domain_verification_challenge')),
     sa.UniqueConstraint('asset_id', name=op.f('uq_domain_verification_challenge_asset_id'))
     )
+    op.create_index(op.f('ix_domain_verification_challenge_organization_id'), 'domain_verification_challenge', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_domain_verification_challenge_requested_by_user_id'), 'domain_verification_challenge', ['requested_by_user_id'], unique=False)
     op.create_table('schedule',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=False),
@@ -280,6 +307,10 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['organization_id'], ['organization.id'], name=op.f('fk_schedule_organization_id_organization')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_schedule'))
     )
+    op.create_index(op.f('ix_schedule_asset_id'), 'schedule', ['asset_id'], unique=False)
+    op.create_index(op.f('ix_schedule_created_by_user_id'), 'schedule', ['created_by_user_id'], unique=False)
+    op.create_index(op.f('ix_schedule_next_run_at'), 'schedule', ['next_run_at'], unique=False)
+    op.create_index(op.f('ix_schedule_organization_id'), 'schedule', ['organization_id'], unique=False)
     op.create_table('scan_job',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -324,6 +355,13 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_scan_job')),
     sa.UniqueConstraint('file_upload_id', name=op.f('uq_scan_job_file_upload_id'))
     )
+    op.create_index(op.f('ix_scan_job_api_key_id'), 'scan_job', ['api_key_id'], unique=False)
+    op.create_index(op.f('ix_scan_job_asset_id'), 'scan_job', ['asset_id'], unique=False)
+    op.create_index(op.f('ix_scan_job_claimed_by_user_id'), 'scan_job', ['claimed_by_user_id'], unique=False)
+    op.create_index(op.f('ix_scan_job_organization_id'), 'scan_job', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_scan_job_purge_at'), 'scan_job', ['purge_at'], unique=False)
+    op.create_index(op.f('ix_scan_job_schedule_id'), 'scan_job', ['schedule_id'], unique=False)
+    op.create_index(op.f('ix_scan_job_triggered_by_user_id'), 'scan_job', ['triggered_by_user_id'], unique=False)
     op.create_table('key_envelope',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('scope', sa.Enum('organization', 'user', 'scan_job', name='key_scope'), nullable=False),
@@ -346,6 +384,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('scan_job_id', name=op.f('uq_key_envelope_scan_job_id')),
     sa.UniqueConstraint('user_id', name=op.f('uq_key_envelope_user_id'))
     )
+    op.create_index(op.f('ix_key_envelope_organization_id'), 'key_envelope', ['organization_id'], unique=False)
     op.create_index('uq_key_envelope_organization_scope', 'key_envelope', ['organization_id'], unique=True, postgresql_where=sa.text("scope = 'organization'"))
     op.create_table('scan_task',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -379,6 +418,11 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['target_asset_id'], ['asset.id'], name=op.f('fk_scan_task_target_asset_id_asset'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_scan_task'))
     )
+    op.create_index(op.f('ix_scan_task_file_upload_id'), 'scan_task', ['file_upload_id'], unique=False)
+    op.create_index(op.f('ix_scan_task_organization_id'), 'scan_task', ['organization_id'], unique=False)
+    op.create_index(op.f('ix_scan_task_parent_task_id'), 'scan_task', ['parent_task_id'], unique=False)
+    op.create_index(op.f('ix_scan_task_scan_job_id'), 'scan_task', ['scan_job_id'], unique=False)
+    op.create_index(op.f('ix_scan_task_target_asset_id'), 'scan_task', ['target_asset_id'], unique=False)
     op.create_table('scan_result',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -394,6 +438,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_scan_result')),
     sa.UniqueConstraint('scan_task_id', name=op.f('uq_scan_result_scan_task_id'))
     )
+    op.create_index(op.f('ix_scan_result_organization_id'), 'scan_result', ['organization_id'], unique=False)
     op.create_table('finding',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('organization_id', sa.Uuid(), nullable=True),
@@ -411,6 +456,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['scan_result_id'], ['scan_result.id'], name=op.f('fk_finding_scan_result_id_scan_result'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_finding'))
     )
+    op.create_index(op.f('ix_finding_organization_id'), 'finding', ['organization_id'], unique=False)
     op.create_index('ix_finding_result_check', 'finding', ['scan_result_id', 'check_id'], unique=False)
     # ### end Alembic commands ###
 
@@ -419,28 +465,74 @@ def downgrade() -> None:
     """Revert this revision."""
     # ### commands auto generated by Alembic - please adjust! ###
     op.drop_index('ix_finding_result_check', table_name='finding')
+    op.drop_index(op.f('ix_finding_organization_id'), table_name='finding')
     op.drop_table('finding')
+    op.drop_index(op.f('ix_scan_result_organization_id'), table_name='scan_result')
     op.drop_table('scan_result')
+    op.drop_index(op.f('ix_scan_task_target_asset_id'), table_name='scan_task')
+    op.drop_index(op.f('ix_scan_task_scan_job_id'), table_name='scan_task')
+    op.drop_index(op.f('ix_scan_task_parent_task_id'), table_name='scan_task')
+    op.drop_index(op.f('ix_scan_task_organization_id'), table_name='scan_task')
+    op.drop_index(op.f('ix_scan_task_file_upload_id'), table_name='scan_task')
     op.drop_table('scan_task')
     op.drop_index('uq_key_envelope_organization_scope', table_name='key_envelope', postgresql_where=sa.text("scope = 'organization'"))
+    op.drop_index(op.f('ix_key_envelope_organization_id'), table_name='key_envelope')
     op.drop_table('key_envelope')
+    op.drop_index(op.f('ix_scan_job_triggered_by_user_id'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_schedule_id'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_purge_at'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_organization_id'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_claimed_by_user_id'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_asset_id'), table_name='scan_job')
+    op.drop_index(op.f('ix_scan_job_api_key_id'), table_name='scan_job')
     op.drop_table('scan_job')
+    op.drop_index(op.f('ix_schedule_organization_id'), table_name='schedule')
+    op.drop_index(op.f('ix_schedule_next_run_at'), table_name='schedule')
+    op.drop_index(op.f('ix_schedule_created_by_user_id'), table_name='schedule')
+    op.drop_index(op.f('ix_schedule_asset_id'), table_name='schedule')
     op.drop_table('schedule')
+    op.drop_index(op.f('ix_domain_verification_challenge_requested_by_user_id'), table_name='domain_verification_challenge')
+    op.drop_index(op.f('ix_domain_verification_challenge_organization_id'), table_name='domain_verification_challenge')
     op.drop_table('domain_verification_challenge')
+    op.drop_index(op.f('ix_domain_verification_organization_id'), table_name='domain_verification')
     op.drop_table('domain_verification')
+    op.drop_index(op.f('ix_asset_feed_token_hash'), table_name='asset_feed')
+    op.drop_index(op.f('ix_asset_feed_organization_id'), table_name='asset_feed')
+    op.drop_index(op.f('ix_asset_feed_created_by_user_id'), table_name='asset_feed')
+    op.drop_index(op.f('ix_asset_feed_asset_id'), table_name='asset_feed')
     op.drop_table('asset_feed')
+    op.drop_index(op.f('ix_report_organization_id'), table_name='report')
+    op.drop_index(op.f('ix_report_generated_by_user_id'), table_name='report')
     op.drop_table('report')
+    op.drop_index(op.f('ix_organization_webhook_created_by_user_id'), table_name='organization_webhook')
     op.drop_table('organization_webhook')
     op.drop_index('uq_organization_invitation_live_email', table_name='organization_invitation', postgresql_where=sa.text('accepted_at IS NULL AND revoked_at IS NULL'))
+    op.drop_index(op.f('ix_organization_invitation_organization_id'), table_name='organization_invitation')
+    op.drop_index(op.f('ix_organization_invitation_invited_by_user_id'), table_name='organization_invitation')
+    op.drop_index(op.f('ix_organization_invitation_accepted_by_user_id'), table_name='organization_invitation')
     op.drop_table('organization_invitation')
+    op.drop_index(op.f('ix_notification_user_id'), table_name='notification')
     op.drop_table('notification')
+    op.drop_index(op.f('ix_file_upload_uploaded_by_user_id'), table_name='file_upload')
+    op.drop_index(op.f('ix_file_upload_purge_due_at'), table_name='file_upload')
+    op.drop_index(op.f('ix_file_upload_organization_id'), table_name='file_upload')
     op.drop_table('file_upload')
+    op.drop_index(op.f('ix_asset_parent_asset_id'), table_name='asset')
+    op.drop_index(op.f('ix_asset_created_by_user_id'), table_name='asset')
     op.drop_table('asset')
+    op.drop_index(op.f('ix_api_key_owner_user_id'), table_name='api_key')
+    op.drop_index(op.f('ix_api_key_organization_id'), table_name='api_key')
+    op.drop_index(op.f('ix_api_key_created_by_user_id'), table_name='api_key')
     op.drop_table('api_key')
     op.drop_index('uq_statement_response_contextual', table_name='statement_response', postgresql_where=sa.text('context_type IS NOT NULL'))
     op.drop_index('uq_statement_response_account_level', table_name='statement_response', postgresql_where=sa.text('context_type IS NULL'))
+    op.drop_index(op.f('ix_statement_response_statement_id'), table_name='statement_response')
+    op.drop_index(op.f('ix_statement_response_organization_id'), table_name='statement_response')
     op.drop_table('statement_response')
+    op.drop_index(op.f('ix_audit_event_retention_until'), table_name='audit_event')
+    op.drop_index(op.f('ix_audit_event_organization_id'), table_name='audit_event')
     op.drop_table('audit_event')
+    op.drop_index(op.f('ix_app_user_organization_id'), table_name='app_user')
     op.drop_table('app_user')
     op.drop_table('statement')
     op.drop_table('organization')

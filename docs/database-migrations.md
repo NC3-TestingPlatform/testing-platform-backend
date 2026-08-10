@@ -46,6 +46,11 @@ Autogenerate proposes; you decide. Before committing one:
 
 ## What autogenerate misses
 
+- **`metadata=MetaData()` in rendered enums.** Because the shared enum types
+  are bound to `Base.metadata`, autogenerate renders that binding as a bare
+  `metadata=MetaData()` call it never imports — a `NameError` on first run.
+  Delete the argument from the generated file; the binding lives in the
+  models, not in a frozen revision.
 - **Enum types on downgrade.** `op.drop_table()` does not drop the PostgreSQL
   enum types the table's creation brought along; the round trip then fails on
   "type already exists". Drop them explicitly (see the initial revision's
