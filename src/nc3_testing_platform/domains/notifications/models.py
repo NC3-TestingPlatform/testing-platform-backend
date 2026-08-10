@@ -21,7 +21,7 @@ class Notification(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="CASCADE")
+        sa.ForeignKey("app_user.id", ondelete="CASCADE"), index=True
     )
     # Stable namespaced notification type.
     type: Mapped[str]
@@ -49,7 +49,7 @@ class OrganizationWebhook(Base):
     endpoint_url_encrypted: Mapped[bytes]
     signing_secret_encrypted: Mapped[bytes]
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
     updated_at: Mapped[datetime] = mapped_column(

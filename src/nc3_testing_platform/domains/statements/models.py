@@ -71,9 +71,13 @@ class StatementResponse(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
-    statement_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("statement.id"))
+    # The partial unique indexes each cover only half the rows, so a plain
+    # lookup by statement gets its own index.
+    statement_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("statement.id"), index=True
+    )
     # Opaque; never encodes a user identifier, and no foreign key is retained.
     envelope_id: Mapped[uuid.UUID]
     context_type: Mapped[str | None]

@@ -54,10 +54,10 @@ class FileUpload(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     original_filename: Mapped[str]
     declared_mime_type: Mapped[str | None]
@@ -67,7 +67,8 @@ class FileUpload(Base):
     # Never a browser-accessible path; null after purge.
     storage_key: Mapped[str | None]
     uploaded_at: Mapped[datetime]
-    purge_due_at: Mapped[datetime]
+    # Indexed for the purge sweep.
+    purge_due_at: Mapped[datetime] = mapped_column(index=True)
     purged_at: Mapped[datetime | None]
 
 
@@ -134,16 +135,20 @@ class ScanJob(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     triggered_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     source: Mapped[enums.ScanSource] = mapped_column(SCAN_SOURCE)
-    schedule_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("schedule.id"))
-    api_key_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("api_key.id"))
+    schedule_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("schedule.id"), index=True
+    )
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("api_key.id"), index=True
+    )
     asset_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("asset.id", ondelete="RESTRICT")
+        sa.ForeignKey("asset.id", ondelete="RESTRICT"), index=True
     )
     # Lowercase IDNA A-label domain not stored as an Asset; guest launches only.
     target_domain: Mapped[str | None]
@@ -161,11 +166,12 @@ class ScanJob(Base):
     # the plaintext is never stored, and a successful claim nulls the hash.
     claim_token_hash: Mapped[str | None]
     claimed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     claimed_at: Mapped[datetime | None]
     # Final hard-deletion timestamp, not the start of a grace period (§7.1).
-    purge_at: Mapped[datetime | None]
+    # Indexed for the purge sweep.
+    purge_at: Mapped[datetime | None] = mapped_column(index=True)
     created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
@@ -209,14 +215,14 @@ class ScanTask(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     scan_job_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("scan_job.id", ondelete="CASCADE")
+        sa.ForeignKey("scan_job.id", ondelete="CASCADE"), index=True
     )
     # Discovery and fan-out lineage for all-in-one scans.
     parent_task_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("scan_task.id")
+        sa.ForeignKey("scan_task.id"), index=True
     )
     module: Mapped[enums.ScanModule] = mapped_column(SCAN_MODULE)
     test_key: Mapped[str]
@@ -225,11 +231,11 @@ class ScanTask(Base):
         SCAN_CLASSIFICATION
     )
     target_asset_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("asset.id", ondelete="RESTRICT")
+        sa.ForeignKey("asset.id", ondelete="RESTRICT"), index=True
     )
     target_domain: Mapped[str | None]
     file_upload_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("file_upload.id")
+        sa.ForeignKey("file_upload.id"), index=True
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
         server_default=sa.text("'{}'::jsonb")
@@ -249,7 +255,7 @@ class ScanResult(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     scan_task_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("scan_task.id", ondelete="CASCADE"), unique=True

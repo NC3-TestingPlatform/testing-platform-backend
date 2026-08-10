@@ -20,22 +20,23 @@ class ApiKey(Base):
 
     __tablename__ = "api_key"
     __table_args__ = (
-        # §14: a reason always accompanies a revocation.
+        # §14: a reason can exist only on a revoked key. The reverse is not
+        # required — a revocation may omit its reason.
         sa.CheckConstraint(
             "revocation_reason IS NULL OR revoked_at IS NOT NULL",
-            name="reason_accompanies_revocation",
+            name="reason_implies_revocation",
         ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="CASCADE")
+        sa.ForeignKey("app_user.id", ondelete="CASCADE"), index=True
     )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     name: Mapped[str]
     scope: Mapped[enums.ApiKeyScope] = mapped_column(API_KEY_SCOPE)

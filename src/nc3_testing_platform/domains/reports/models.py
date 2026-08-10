@@ -40,7 +40,7 @@ class Report(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     tier: Mapped[enums.ReportTier] = mapped_column(REPORT_TIER)
     technical_view: Mapped[enums.TechnicalReportView | None] = mapped_column(
@@ -51,6 +51,6 @@ class Report(Base):
     source_scan_job_id: Mapped[uuid.UUID | None]
     source_scan_task_id: Mapped[uuid.UUID | None]
     generated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     generated_at: Mapped[datetime]

@@ -40,7 +40,7 @@ class AuditEvent(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     # Organization or platform chain identifier, never a user chain.
     chain_id: Mapped[str]
@@ -59,4 +59,5 @@ class AuditEvent(Base):
     occurred_at: Mapped[datetime]
     previous_hash: Mapped[str | None]
     entry_hash: Mapped[str]
-    retention_until: Mapped[datetime]
+    # Indexed for the retention sweep.
+    retention_until: Mapped[datetime] = mapped_column(index=True)

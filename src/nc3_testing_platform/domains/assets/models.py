@@ -49,10 +49,10 @@ class Asset(Base):
     value: Mapped[str]
     origin: Mapped[enums.AssetOrigin] = mapped_column(ASSET_ORIGIN)
     parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("asset.id", ondelete="RESTRICT")
+        sa.ForeignKey("asset.id", ondelete="RESTRICT"), index=True
     )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     regression_alerts_enabled: Mapped[bool] = mapped_column(server_default=sa.false())
     created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
@@ -72,7 +72,7 @@ class DomainVerification(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     asset_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("asset.id", ondelete="RESTRICT"), unique=True
@@ -97,7 +97,7 @@ class DomainVerificationChallenge(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     asset_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("asset.id", ondelete="RESTRICT"), unique=True
@@ -110,7 +110,7 @@ class DomainVerificationChallenge(Base):
     verification_token: Mapped[str]
     token_expires_at: Mapped[datetime]
     requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     requested_at: Mapped[datetime]
     last_recheck_at: Mapped[datetime | None]
@@ -124,15 +124,16 @@ class AssetFeed(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     asset_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("asset.id", ondelete="RESTRICT")
+        sa.ForeignKey("asset.id", ondelete="RESTRICT"), index=True
     )
     format: Mapped[enums.FeedFormat] = mapped_column(FEED_FORMAT)
-    token_hash: Mapped[str]
+    # A feed request presents only the token, so this is the lookup column.
+    token_hash: Mapped[str] = mapped_column(index=True)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     revoked_at: Mapped[datetime | None]
     last_used_at: Mapped[datetime | None]
