@@ -1,0 +1,150 @@
+# One worker class per egress profile, each consuming exactly one queue.
+# Queue names are fixed by the egress-segregated task queues decision; a module never selects its own queue.
+#
+# Compose expresses only the coarsest of the four egress profiles: an internal network blocks all outbound traffic, but "public internet with RFC1918 blocked" and "SMTP relay and org webhooks only" need firewall rules the container runtime does not model.
+# The network layer remains the authoritative SSRF control, so these definitions are not the enforcement boundary.
+#
+# Each queue builds its own image from its own Dockerfile stage (US #78 ADR: per-egress-queue images, not one monolithic all-engines venv).
+# Distinct targets get distinct tags, so concurrent builds do not race on one tag, and rebuilding one queue's image cannot leave another on stale code.
+#
+# The pool is prefork everywhere (US #78 ADR): engine work is native-heavy, and the time limits plus max-tasks-per-child recycling in worker/app.py only bite with real child processes.
+#
+# The `x-worker` anchor resolves only within this file; cross-file reuse goes through `extends`.
+x-worker: &worker
+  extends:
+    file: common.yml
+    service: defaults
+  environment: &worker-env
+    CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-100}
+    SCAN_TASK_TIMEOUT_SECONDS: ${SCAN_TASK_TIMEOUT_SECONDS:-120}
+    SCAN_JOB_TIMEOUT_SECONDS: ${SCAN_JOB_TIMEOUT_SECONDS:-900}
+    SCAN_HEARTBEAT_INTERVAL_SECONDS: ${SCAN_HEARTBEAT_INTERVAL_SECONDS:-5}
+    SCAN_STALE_AFTER_SECONDS: ${SCAN_STALE_AFTER_SECONDS:-30}
+    SCAN_SWEEP_INTERVAL_SECONDS: ${SCAN_SWEEP_INTERVAL_SECONDS:-15}
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  # Longer than the worst-case task lifetime — the hard time limit is
+  # SCAN_TASK_TIMEOUT_SECONDS + 30 (worker/app.py), 150s by default — so an
+  # in-flight task is killed by Celery and its partial results written before
+  # the runtime sends SIGKILL. Raising the task timeout past ~150s means
+  # raising this too.
+  stop_grace_period: 180s
+
+# A worker that starts but cannot serve is caught two ways: worker/app.py's
+# preflight exits the container at startup when the image lacks its queue's
+# binaries, and the ping below marks it unhealthy when the worker stops
+# answering its own control queue. Every ping pays a broker round trip, so the
+# interval stays wide.
+x-worker-healthcheck: &worker-healthcheck
+  interval: 30s
+  timeout: 15s
+  retries: 3
+  start_period: 60s
+
+services:
+  worker-non-intrusive-scan:
+    <<: *worker
+    image: nc3-testing-platform-worker-non-intrusive-scan:local
+    build:
+      context: ../..
+      target: worker-non-intrusive-scan
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=non-intrusive-scan
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=non-intrusive-scan@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A nc3_testing_platform.worker.app inspect ping -d non-intrusive-scan@$$HOSTNAME --timeout 10"]
+      <<: *worker-healthcheck
+
+  worker-intrusive-scan:
+    <<: *worker
+    image: nc3-testing-platform-worker-intrusive-scan:local
+    build:
+      context: ../..
+      target: worker-intrusive-scan
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=intrusive-scan
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=intrusive-scan@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A nc3_testing_platform.worker.app inspect ping -d intrusive-scan@$$HOSTNAME --timeout 10"]
+      <<: *worker-healthcheck
+
+  worker-file-analysis:
+    <<: *worker
+    image: nc3-testing-platform-worker-file-analysis:local
+    build:
+      context: ../..
+      target: worker-file-analysis
+    # Prefork also gives each hostile file its own process to escape from.
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=file-analysis
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=file-analysis@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A nc3_testing_platform.worker.app inspect ping -d file-analysis@$$HOSTNAME --timeout 10"]
+      <<: *worker-healthcheck
+
+  worker-platform:
+    <<: *worker
+    image: nc3-testing-platform-worker-platform:local
+    build:
+      context: ../..
+      target: worker-platform
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=platform
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=platform@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A nc3_testing_platform.worker.app inspect ping -d platform@$$HOSTNAME --timeout 10"]
+      <<: *worker-healthcheck
+
+  beat:
+    <<: *worker
+    # Scheduled dispatch and the enqueue reaper, on the platform image. The
+    # schedule is empty until those periodic tasks land in worker/app.py; until
+    # then beat idles, proving only the wiring and the schedule volume.
+    # Exactly one replica: a second beat double-publishes every periodic task.
+    # No healthcheck: beat exposes no control queue to ping.
+    image: nc3-testing-platform-worker-platform:local
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - beat
+      - --loglevel=INFO
+      # Last-run times outlive the container, so a restart does not re-fire every periodic task at once.
+      - --schedule=/var/lib/celery/beat-schedule
+    volumes:
+      - beat-schedule:/var/lib/celery
+
+volumes:
+  beat-schedule:
