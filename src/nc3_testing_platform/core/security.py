@@ -17,18 +17,16 @@ not this contract: the BFF calls this API as an ordinary client, presenting an
 OIDC bearer token or an API key.
 """
 
-import os
 from typing import Annotated
 
 from fastapi import Depends
 from fastapi.security import APIKeyHeader, OpenIdConnect
 
 from nc3_testing_platform.core.errors import PROBLEM_MEDIA_TYPE, ProblemDetail
+from nc3_testing_platform.core.settings import settings
 
-OIDC_DISCOVERY_URL = os.getenv(
-    "OIDC_DISCOVERY_URL",
-    "https://idp.example.invalid/.well-known/openid-configuration",
-)
+# Re-exported name; the environment read lives on the settings module.
+OIDC_DISCOVERY_URL = settings.oidc_discovery_url
 
 oidc = OpenIdConnect(
     openIdConnectUrl=OIDC_DISCOVERY_URL,

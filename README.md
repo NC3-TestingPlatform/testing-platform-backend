@@ -30,6 +30,8 @@ cp .env.example .env
 
 Compose picks `.env` up automatically; `make dev` passes it to the host-run API.
 
+The application reads its environment in exactly one place, `core/settings.py` (12-factor: environment variables only, validated at startup with an error naming the offending variable). Any variable can instead be supplied as `NAME_FILE=/path` — the value is read from the named file, which is how a deployment mounts secrets (e.g. `/run/secrets/...`) without putting them in the environment.
+
 # Running the mock server
 
 ```bash

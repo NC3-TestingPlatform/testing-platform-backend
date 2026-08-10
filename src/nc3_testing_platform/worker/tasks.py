@@ -11,13 +11,13 @@ imports this table's shape.
 """
 
 import json
-import os
 import time
 import uuid
 
 import psycopg
 from celery import chord
 
+from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.worker.app import app
 
 # Stand-ins for the real engines; each "runs" as its own task on the
@@ -29,11 +29,7 @@ _STEPS = ("resolve", "probe", "evaluate")
 
 def _database_url() -> str:
     """The task-side DSN, without the SQLAlchemy driver suffix psycopg rejects."""
-    url = os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/nc3_testing_platform",
-    )
-    return url.replace("postgresql+psycopg://", "postgresql://", 1)
+    return settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
 
 @app.task(name="scan.dispatch")

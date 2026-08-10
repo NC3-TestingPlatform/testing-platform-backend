@@ -11,18 +11,19 @@ import os
 from celery import Celery
 from celery.signals import worker_init
 
+from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.worker.preflight import run_preflight
 
 # A task that overruns the soft limit gets SoftTimeLimitExceeded raised inside it
 # and may still write partial results; the hard limit, 30 seconds later, kills the
 # process outright. Keep the gap: a hard kill loses whatever the task was writing.
-_SOFT_TIME_LIMIT = int(os.getenv("SCAN_TASK_TIMEOUT_SECONDS", "120"))
+_SOFT_TIME_LIMIT = settings.scan_task_timeout_seconds
 _TIME_LIMIT = _SOFT_TIME_LIMIT + 30
 
 app = Celery(
     "nc3_testing_platform",
-    broker=os.getenv("CELERY_BROKER_URL", "amqp://rabbitmq:rabbitmq@localhost:5672//"),
-    backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    broker=settings.celery_broker_url,
+    backend=settings.redis_url,
     include=["nc3_testing_platform.worker.tasks"],
 )
 
@@ -41,7 +42,7 @@ app.conf.update(
     task_time_limit=_TIME_LIMIT,
     # Recycle after native-heavy work: a child that has run engines with C
     # extensions or subprocesses gets replaced instead of accumulating leaks.
-    worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "100")),
+    worker_max_tasks_per_child=settings.celery_max_tasks_per_child,
     task_track_started=True,
 )
 
