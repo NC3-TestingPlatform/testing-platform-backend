@@ -4407,48 +4407,6 @@
       }
     },
     "/api/v1/statement-responses": {
-      "get": {
-        "tags": [
-          "statements"
-        ],
-        "summary": "List the caller's statement responses",
-        "description": "Receipts the caller has recorded, account-level and context-bound alike.\n\nThe readback behind the acceptance prompt: a statement in force whose current\nversion has no receipt here is one the caller has yet to answer.",
-        "operationId": "list_statement_responses_api_v1_statement_responses_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/StatementResponseReceipt"
-                  },
-                  "type": "array",
-                  "title": "Response List Statement Responses Api V1 Statement Responses Get"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "statements"
@@ -4456,15 +4414,23 @@
         "summary": "Record an account-level response",
         "description": "Record acceptance of an account-level statement.\n\nRejects any statement that requires a context: a per-launch declaration is bound\nto the launch it belongs to and travels in the launch payload, so recording one\nhere would produce a receipt attached to nothing.",
         "operationId": "record_statement_response_api_v1_statement_responses_post",
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StatementResponseSubmission"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -4517,7 +4483,15 @@
               }
             }
           }
-        },
+        }
+      },
+      "get": {
+        "tags": [
+          "statements"
+        ],
+        "summary": "List the caller's statement responses",
+        "description": "Receipts the caller has recorded, account-level and context-bound alike.\n\nThe readback behind the acceptance prompt: a statement in force whose current\nversion has no receipt here is one the caller has yet to answer.\n\nCursor-paginated from the start: account-level receipts stay countable on\none hand, but context-bound receipts arrive per launch, and turning a bare\narray into a page envelope later would break the contract.",
+        "operationId": "list_statement_responses_api_v1_statement_responses_get",
         "security": [
           {
             "OpenIdConnect": []
@@ -4525,7 +4499,73 @@
           {
             "ApiKey": []
           }
-        ]
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor returned as `next_cursor` by the previous page.",
+              "title": "Cursor"
+            },
+            "description": "Opaque cursor returned as `next_cursor` by the previous page."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Max items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Max items per page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_StatementResponseReceipt_"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/admin/audit-events": {
@@ -6450,6 +6490,34 @@
           "items"
         ],
         "title": "Page[Schedule]"
+      },
+      "Page_StatementResponseReceipt_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StatementResponseReceipt"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Cursor for the next page; `null` when there are no more results."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "Page[StatementResponseReceipt]"
       },
       "ProblemDetail": {
         "properties": {

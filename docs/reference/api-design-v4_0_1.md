@@ -358,7 +358,7 @@ POST /api/v1/statement-responses
 - `GET /statements` returns the statements currently in force — `effective_at` reached, not retired — each with its `id`, `statement_key`, `version`, `response_kind`, `required_context_type`, `content_hash`, `content_uri`, and `effective_at`. Unauthenticated.
 - A client must send the exact version it answered. This operation is the only way to learn which version is current.
 - `POST /statement-responses` records an account-level response, where `required_context_type` is null. It rejects a statement that requires a context; a per-launch declaration travels in the launch payload (§2.1).
-- `GET /statement-responses` returns the caller's receipts, account-level and context-bound alike, each restating the `statement_key` and the exact `version` answered. A statement in force whose current version has no receipt is one the caller has yet to answer — the readback behind the acceptance prompt. Authenticated.
+- `GET /statement-responses` returns the caller's receipts, account-level and context-bound alike, each restating the `statement_key` and the exact `version` answered. A statement in force whose current version has no receipt is one the caller has yet to answer — the readback behind the acceptance prompt. Authenticated; cursor-paginated, because context-bound receipts arrive per launch.
 - No v4.0 executable test is classified as intrusive, so no v4.0 launch requires a per-launch declaration.
 
 ## 15. Audit log

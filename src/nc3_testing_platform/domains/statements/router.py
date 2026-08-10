@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from nc3_testing_platform.core.enums import StatementResponseKind
 from nc3_testing_platform.core.errors import problem_responses
+from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.statements.schemas import (
     Statement,
@@ -109,10 +110,16 @@ async def record_statement_response(
     responses=problem_responses(401),
     dependencies=[CredentialRequired],
 )
-async def list_statement_responses() -> list[StatementResponseReceipt]:
+async def list_statement_responses(
+    page: CursorPage,
+) -> Page[StatementResponseReceipt]:
     """Receipts the caller has recorded, account-level and context-bound alike.
 
     The readback behind the acceptance prompt: a statement in force whose current
     version has no receipt here is one the caller has yet to answer.
+
+    Cursor-paginated from the start: account-level receipts stay countable on
+    one hand, but context-bound receipts arrive per launch, and turning a bare
+    array into a page envelope later would break the contract.
     """
-    return [_sample_receipt()]
+    return Page(items=[_sample_receipt()], next_cursor=None)
