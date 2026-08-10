@@ -23,6 +23,14 @@ class OrganizationRole(StrEnum):
     ORGANIZATION_ADMIN = "organization_admin"
 
 
+class KeyScope(StrEnum):
+    """Ownership scope of one key envelope (data-model §3.3)."""
+
+    ORGANIZATION = "organization"
+    USER = "user"
+    SCAN_JOB = "scan_job"
+
+
 class AssetType(StrEnum):
     """v4.0 assets are currently domains."""
 
