@@ -85,6 +85,9 @@ def persist(results: list[dict], domain: str) -> str:
     """
     artifact_id = str(uuid.uuid4())
     with psycopg.connect(_database_url()) as conn:
+        # IF NOT EXISTS checks before it locks, so two first-ever persists can
+        # still collide on the create; the advisory lock serializes just that.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('scan_artifacts'))")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS scan_artifacts (

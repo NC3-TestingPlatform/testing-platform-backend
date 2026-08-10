@@ -5,8 +5,8 @@ services:
       file: common.yml
       service: defaults
     environment:
-      # Must match the HTTP Origin the browser sends, port included, or the login form is rejected as a cross-origin request.
-      PUB_URL: ${RAUTHY_PUB_URL:-localhost:8080}
+      # pub_url, rp_id, and rp_origin live together in rauthy/config.toml: they
+      # must agree with each other, so none of them gets a lone env override here.
       LISTEN_SCHEME: http
       LISTEN_ADDRESS: 0.0.0.0
       LISTEN_PORT_HTTP: 8080
@@ -18,7 +18,10 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD_PLAIN: ${RAUTHY_ADMIN_PASSWORD:-DevAdmin.123456}
       LOG_LEVEL: ${RAUTHY_LOG_LEVEL:-info}
     ports:
-      - "${RAUTHY_PORT:-8080}:8080"
+      # Loopback only: this instance carries committed development secrets and
+      # must never be reachable beyond the developer's machine. The deployment
+      # stack (docker-compose.dokploy.yml) carries no development IdP at all.
+      - "127.0.0.1:${RAUTHY_PORT:-8080}:8080"
     volumes:
       # Rauthy panics at startup without a config file, whatever the environment carries.
       - ./rauthy/config.toml:/app/config.toml:ro

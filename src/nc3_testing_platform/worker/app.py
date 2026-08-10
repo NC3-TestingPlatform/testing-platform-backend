@@ -34,6 +34,9 @@ app.conf.update(
         "scan.persist": {"queue": "platform"},
         "scan.run_module": {"queue": "non-intrusive-scan"},
     },
+    # A task someone adds without a route must land on a queue a worker
+    # consumes, not on Celery's built-in default that nothing reads.
+    task_default_queue="platform",
     task_soft_time_limit=_SOFT_TIME_LIMIT,
     task_time_limit=_TIME_LIMIT,
     # Recycle after native-heavy work: a child that has run engines with C

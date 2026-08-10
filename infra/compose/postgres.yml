@@ -9,7 +9,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-nc3_testing_platform}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Loopback only: development credentials must not answer on LAN interfaces.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       # Postgres 18 moved PGDATA to /var/lib/postgresql/18/docker and the image VOLUME to the parent.
       - postgres-data:/var/lib/postgresql

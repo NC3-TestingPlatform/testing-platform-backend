@@ -22,9 +22,10 @@ services:
         chmod 600 /var/lib/rabbitmq/.erlang.cookie; };
         exec docker-entrypoint.sh rabbitmq-server
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
+      # Loopback only: development credentials must not answer on LAN interfaces.
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
       # Management UI, the -management tag's reason for being.
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       # Permits the deprecated queue type Celery's control channel still uses; see the file.

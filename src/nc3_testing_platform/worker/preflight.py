@@ -11,7 +11,9 @@ commit that installs them into that queue's Dockerfile stage, so image and
 check cannot drift apart.
 """
 
+import re
 import shutil
+import subprocess
 import sys
 
 REQUIRED_BINARIES: dict[str, tuple[str, ...]] = {
@@ -24,6 +26,27 @@ REQUIRED_BINARIES: dict[str, tuple[str, ...]] = {
     "file-analysis": (),
     "platform": (),
 }
+
+# Binaries whose mere presence is not enough: the post-quantum checks need the
+# openssl 3.5 group syntax, and an older binary would pass a which() test while
+# producing quietly incomplete scans.
+MINIMUM_VERSIONS: dict[str, tuple[int, int]] = {
+    "openssl": (3, 5),
+}
+
+
+def _reported_version(binary: str) -> tuple[int, int] | None:
+    """The (major, minor) the binary reports for `<binary> version`, else None."""
+    try:
+        output = subprocess.run(
+            [binary, "version"], capture_output=True, text=True, timeout=10, check=True
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"(\d+)\.(\d+)", output)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
 
 
 def run_preflight(queue: str) -> None:
@@ -43,6 +66,18 @@ def run_preflight(queue: str) -> None:
             f"preflight: queue {queue!r} requires binaries not on PATH: "
             f"{', '.join(missing)}. The image is incomplete; refusing to start."
         )
+    for binary in REQUIRED_BINARIES[queue]:
+        minimum = MINIMUM_VERSIONS.get(binary)
+        if minimum is None:
+            continue
+        found = _reported_version(binary)
+        if found is None or found < minimum:
+            wanted = ".".join(str(part) for part in minimum)
+            got = ".".join(str(part) for part in found) if found else "unreadable"
+            sys.exit(
+                f"preflight: queue {queue!r} requires {binary} >= {wanted}, "
+                f"the image carries {got}. Refusing to start."
+            )
 
 
 if __name__ == "__main__":

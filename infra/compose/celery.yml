@@ -31,8 +31,12 @@ x-worker: &worker
       condition: service_healthy
     redis:
       condition: service_healthy
-  # Long enough for an in-flight scan to be killed and its partial results written before the runtime sends SIGKILL.
-  stop_grace_period: 120s
+  # Longer than the worst-case task lifetime — the hard time limit is
+  # SCAN_TASK_TIMEOUT_SECONDS + 30 (worker/app.py), 150s by default — so an
+  # in-flight task is killed by Celery and its partial results written before
+  # the runtime sends SIGKILL. Raising the task timeout past ~150s means
+  # raising this too.
+  stop_grace_period: 180s
 
 # A worker that starts but cannot serve is caught two ways: worker/app.py's
 # preflight exits the container at startup when the image lacks its queue's
@@ -125,7 +129,9 @@ services:
 
   beat:
     <<: *worker
-    # Scheduled dispatch and the enqueue reaper, on the platform image.
+    # Scheduled dispatch and the enqueue reaper, on the platform image. The
+    # schedule is empty until those periodic tasks land in worker/app.py; until
+    # then beat idles, proving only the wiring and the schedule volume.
     # Exactly one replica: a second beat double-publishes every periodic task.
     # No healthcheck: beat exposes no control queue to ping.
     image: nc3-testing-platform-worker-platform:local

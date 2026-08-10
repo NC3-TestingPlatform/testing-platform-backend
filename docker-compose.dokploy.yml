@@ -31,7 +31,8 @@ x-worker: &worker
       condition: service_healthy
     redis:
       condition: service_healthy
-  stop_grace_period: 120s
+  # Longer than the worst-case task lifetime (hard limit = task timeout + 30s).
+  stop_grace_period: 180s
 
 services:
   api:
@@ -41,6 +42,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
       REDIS_URL: redis://redis:6379/0
       OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
     expose:

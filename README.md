@@ -68,7 +68,7 @@ Workers refuse to start if their image is missing the external binaries their qu
 
 # Deploying with Dokploy
 
-`docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
+`docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_COOKIE` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
 
 # Generating the OpenAPI contract
 

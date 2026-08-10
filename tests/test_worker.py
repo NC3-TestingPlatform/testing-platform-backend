@@ -44,3 +44,24 @@ def test_preflight_rejects_unknown_queue() -> None:
 def test_preflight_accepts_queue_with_no_requirements() -> None:
     """The platform queue needs no external binaries and passes anywhere."""
     run_preflight("platform")
+
+
+def test_preflight_rejects_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An image lacking a required binary must refuse to start."""
+    monkeypatch.setitem(
+        REQUIRED_BINARIES, "platform", ("binary-that-cannot-exist-anywhere",)
+    )
+    with pytest.raises(SystemExit):
+        run_preflight("platform")
+
+
+def test_preflight_rejects_binary_below_minimum_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A present binary older than its queue's floor must refuse to start."""
+    from nc3_testing_platform.worker import preflight
+
+    monkeypatch.setitem(REQUIRED_BINARIES, "platform", ("python3",))
+    monkeypatch.setitem(preflight.MINIMUM_VERSIONS, "python3", (99, 0))
+    with pytest.raises(SystemExit):
+        run_preflight("platform")
