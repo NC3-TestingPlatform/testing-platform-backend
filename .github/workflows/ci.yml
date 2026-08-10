@@ -103,6 +103,25 @@ jobs:
       - name: API liveness answers from the host
         run: curl -sSf http://127.0.0.1:8000/healthz
 
+      # Taiga #158: the proxy is the browser-facing entry; both checks go
+      # through it. The SSE check proves pass-through is not buffered into
+      # uselessness — the stream must announce itself as an event stream and
+      # deliver bytes before --max-time expires.
+      - name: API liveness answers through the reverse proxy
+        run: curl -sSf http://127.0.0.1:8888/healthz
+
+      - name: SSE streams through the reverse proxy
+        run: |
+          # The id is the live mock's stable sample job (scans/examples.py);
+          # the path validates as UUIDv7, so a nil UUID would 422.
+          headers=$(curl -sSfN --max-time 5 -D - -o /dev/null \
+            "http://127.0.0.1:8888/api/v1/scans/019ee1a0-3b91-7c05-8f41-6d2a90bb17c4/events")
+          if ! printf '%s' "$headers" | grep -qi '^content-type: text/event-stream'; then
+            echo "::error::expected text/event-stream through the proxy" >&2
+            printf '%s\n' "$headers"
+            exit 1
+          fi
+
       - name: Scan round trip lands in PostgreSQL
         run: |
           make scan DOMAIN=ci-smoke.example

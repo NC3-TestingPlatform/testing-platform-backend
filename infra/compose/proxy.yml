@@ -1,0 +1,26 @@
+services:
+  proxy:
+    # Pinned minor tag, same policy as the other service images.
+    image: caddy:2.10-alpine
+    extends:
+      file: common.yml
+      service: defaults
+    ports:
+      # Loopback only, like every published port in this stack. 8888 because
+      # 8080 belongs to rauthy and 8000 is the API's own direct port.
+      - "127.0.0.1:${PROXY_PORT:-8888}:80"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # Probes through the proxy to the API's liveness route, so "healthy"
+      # means Caddy is up AND actually passing requests to the upstream.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Nothing to persist: certificates are off and the config is a read-only mount.
+    stop_grace_period: 5s
