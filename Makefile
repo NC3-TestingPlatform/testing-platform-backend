@@ -1,7 +1,8 @@
 .PHONY: dev export-openapi lint typecheck test up down logs scan
 
+# The host-run API reads .env when present, matching what Compose gives the containers.
 dev:
-	uv run fastapi dev src/nc3_testing_platform/main.py
+	uv run $(if $(wildcard .env),--env-file .env) fastapi dev src/nc3_testing_platform/main.py
 
 up:
 	docker compose up -d

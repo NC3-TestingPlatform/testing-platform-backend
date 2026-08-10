@@ -1,16 +1,14 @@
-# TODO: AI generated for quick tests, make a docs-first implementation before merge
 # Development-only identity provider.
 # Rauthy requires this file, even when every value is supplied through the environment.
 #
 # Values here are the fallbacks; the environment variables set in `infra/compose/rauthy.yml` override them.
 # Nothing in this file is a secret worth protecting: production deployments supply their own values through the environment.
 
-# Scheme, host and port must match the Origin header the browser sends, or the login form is refused as cross-origin.
-# Non-standard ports are part of the value.
-pub_url = 'localhost:8080'
-
 [server]
 scheme = 'http'
+# Host and port must match the Origin header the browser sends, or the login form is refused as cross-origin.
+# Non-standard ports are part of the value.
+pub_url = 'localhost:8080'
 
 [cluster]
 # Hiqlite is the embedded database and runs a Raft node even alone, so a single-node deployment still needs an id and a one-member cluster.
