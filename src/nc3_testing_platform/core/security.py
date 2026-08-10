@@ -104,7 +104,9 @@ def require_current_mfa_assurance(claims: dict[str, object]) -> None:
     """Rejects claims whose authentication event lacks current MFA assurance.
 
     Assurance is `amr` carrying an MFA method within the configured `max_age`.
-    A failure answers `401` with the RFC 9470 `insufficient_user_authentication` challenge.
+    A failure answers `403` with problem `type` :data:`~nc3_testing_platform.core.errors.STEP_UP_PROBLEM_TYPE`:
+    the caller is authenticated but under-assured, and the type distinguishes the remedy — a fresh authentication with an MFA method — from a plain forbidden, which no retry fixes.
+    RFC 9470's `WWW-Authenticate` challenge is deliberately not used: its parameters are `acr`-based, and §5.1 reads `amr` because `acr` vocabularies are provider-defined.
     """
     raise NotImplementedError
 

@@ -82,7 +82,13 @@ async def record_statement_response(
     to the launch it belongs to and travels in the launch payload, so recording one
     here would produce a receipt attached to nothing.
     """
-    return _sample_receipt()
+    return StatementResponseReceipt(
+        id=_RECEIPT_ID,
+        statement_id=_STATEMENT_ID,
+        statement_key=body.statement_key,
+        version=body.version,
+        responded_at=datetime(2026, 7, 31, 9, 0, tzinfo=UTC),
+    )
 
 
 @router.get(
