@@ -275,7 +275,7 @@ async def cancel_scan(scan_id: ResourceId) -> ScanJob:
     safe interruption points; a canceled task cannot later produce an accepted
     successful result.
     """
-    return examples.sample_job()
+    return examples.canceled_job()
 
 
 @router.post(

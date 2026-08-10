@@ -199,6 +199,17 @@ def sample_job(
     )
 
 
+def canceled_job() -> ScanJob:
+    """The job once cancellation intent has taken effect.
+
+    `canceled` appears in no other sample, and the cancel response is where a
+    client learns the terminal shape it must render.
+    """
+    job = sample_job(status=ScanJobStatus.CANCELED)
+    job.status_reason = "scan.canceled_by_user"
+    return job
+
+
 def sample_job_detail() -> ScanJobDetail:
     """The job/task snapshot a live-progress client fetches before subscribing."""
     return ScanJobDetail(**sample_job().model_dump(), tasks=sample_tasks())
