@@ -12,11 +12,13 @@ endpoint. Raising `HTTPException` here would produce a second, differently-shape
 validation error for one operation.
 """
 
-from typing import Annotated, Any
+from collections.abc import AsyncIterator
+from typing import Annotated, Any, cast
 
-from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi import Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from nc3_testing_platform.core.security import ApiKeyAuth, OidcAuth
 from nc3_testing_platform.domains.scans.schemas import (
@@ -68,6 +70,10 @@ class ResolvedLaunch(BaseModel):
 
     body: ScanLaunch
     authenticated: bool
+    # The uploaded file itself, present exactly on multipart launches. The
+    # handler must read it before responding: the dependency closes it after
+    # the response, so the spooled bytes do not outlive the request.
+    upload: UploadFile | None = None
 
 
 def _invalid(loc: tuple[str, ...], message: str) -> RequestValidationError:
@@ -99,7 +105,7 @@ async def resolve_launch_body(
     request: Request,
     oidc: OidcAuth,
     key: ApiKeyAuth,
-) -> ResolvedLaunch:
+) -> AsyncIterator[ResolvedLaunch]:
     """Select the request schema, validate against it, and return the result.
 
     The media type selects a domain or file launch, while the caller’s access state
@@ -111,11 +117,24 @@ async def resolve_launch_body(
 
     if media_type == MULTIPART_MEDIA_TYPE:
         form = await request.form()
-        if "file" not in form:
+        upload = form.get("file")
+        # A plain string field named `file` is not a file part. The parsed form
+        # holds Starlette's UploadFile (FastAPI's is a subclass used for typing).
+        if not isinstance(upload, StarletteUploadFile):
             raise _invalid(("body", "file"), "A file part is required.")
-        return ResolvedLaunch(
-            body=FileScanLaunch(file=str(form["file"])), authenticated=authenticated
-        )
+        try:
+            yield ResolvedLaunch(
+                body=FileScanLaunch(file=upload.filename or "upload"),
+                authenticated=authenticated,
+                # FastAPI's UploadFile is the typing face of Starlette's; the
+                # model validator accepts the parsed instance as-is.
+                upload=cast(UploadFile, upload),
+            )
+        finally:
+            # Closing the form releases the upload's spool file once the
+            # response is done, whatever the handler did with it.
+            await form.close()
+        return
 
     if media_type != JSON_MEDIA_TYPE:
         raise HTTPException(
@@ -140,16 +159,17 @@ async def resolve_launch_body(
                 ("body", "target"),
                 "An authenticated launch carries `asset_id`, not `target`.",
             )
-        return ResolvedLaunch(
+        yield ResolvedLaunch(
             body=_validate(AssetScanLaunch, payload), authenticated=True
         )
+        return
 
     if "asset_id" in payload:
         raise _invalid(
             ("body", "asset_id"),
             "An unauthenticated launch carries `target`, not `asset_id`.",
         )
-    return ResolvedLaunch(body=_validate(GuestScanLaunch, payload), authenticated=False)
+    yield ResolvedLaunch(body=_validate(GuestScanLaunch, payload), authenticated=False)
 
 
 # Route dependency. Yields a validated launch request together with the access
