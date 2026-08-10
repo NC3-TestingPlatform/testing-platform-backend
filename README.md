@@ -9,7 +9,7 @@ Project repository for the NC3 Testing Platform backend (v4).
 - Python 3.13, [uv](https://docs.astral.sh/uv/) (packaging + virtualenv)
 - FastAPI + Pydantic — the app and its request/response models
 - Celery + RabbitMQ (broker) + Redis (result backend) — the task queues, one per egress profile
-- SQLAlchemy 2.0 + Alembic + PostgreSQL — the data model and its migration workflow (see [docs/database-migrations.md](docs/database-migrations.md))
+- SQLAlchemy 2.0 + Alembic + PostgreSQL — the data model and its migration workflow (see [docs/database-migrations.md](docs/database-migrations.md); runtime role model in [docs/database-roles.md](docs/database-roles.md))
 - Docker Compose — the local stack and the Dokploy deployment
 - pytest + openapi-spec-validator (dev) — the contract test suite
 
@@ -65,7 +65,7 @@ Workers refuse to start if their image is missing the external binaries their qu
 
 # Deploying with Dokploy
 
-`docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_COOKIE` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
+`docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `NC3_APP_DB_PASSWORD` (runtime role, see [docs/database-roles.md](docs/database-roles.md)), `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_COOKIE` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
 
 # Generating the OpenAPI contract
 

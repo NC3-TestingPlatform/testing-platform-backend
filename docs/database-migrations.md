@@ -65,9 +65,13 @@ Autogenerate proposes; you decide. Before committing one:
   the diff. Rewrite those by hand as a drop-and-create pair; the structural
   tests (`EXPECTED_CHECKS`) are what actually pin the expressions.
 - **Renames** (above) — always drop-and-create unless rewritten.
-- **Row-level security, grants, triggers.** Deliberately outside the models;
-  when they arrive (RLS is descoped to a later phase), they are hand-written
-  operations.
+- **Roles, grants, row-level security, triggers.** Deliberately outside the
+  models, so autogenerate never proposes them and `alembic check` never
+  notices them missing. The `nc3_app` role and its grants are hand-written
+  operations (see the `nc3_app role and grants` revision and
+  [database-roles.md](database-roles.md)); every revision that creates a table
+  must `GRANT` on it by hand in the same revision. RLS policies (B5) will
+  follow the same rule.
 
 ## Wipe rules
 
