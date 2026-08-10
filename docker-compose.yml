@@ -1,0 +1,16 @@
+# Local development stack.
+# An index, not configuration: each service is defined in its own file so it can be reviewed against that service's own documentation.
+#
+# Included files are loaded as separate application models and copied in.
+# Conflicting resource names produce a warning rather than a merge, so names stay unique across the set.
+#
+# infra/compose/common.yml is reached through `extends` from inside each service file; including it here would start its `defaults` service as a container.
+
+name: nc3-testing-platform
+
+include:
+  - infra/compose/postgres.yml
+  - infra/compose/redis.yml
+  - infra/compose/rabbitmq.yml
+  - infra/compose/celery.yml
+  - infra/compose/rauthy.yml

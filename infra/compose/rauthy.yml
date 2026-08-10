@@ -1,0 +1,30 @@
+services:
+  rauthy:
+    image: ghcr.io/sebadob/rauthy:0.36.2
+    extends:
+      file: common.yml
+      service: defaults
+    environment:
+      # Must match the HTTP Origin the browser sends, port included, or the login form is rejected as a cross-origin request.
+      PUB_URL: ${RAUTHY_PUB_URL:-localhost:8080}
+      LISTEN_SCHEME: http
+      LISTEN_ADDRESS: 0.0.0.0
+      LISTEN_PORT_HTTP: 8080
+      # Hiqlite is the embedded database.
+      # Both secrets are required at startup and must be at least 16 characters; without them the container crash-loops.
+      HQL_SECRET_RAFT: ${RAUTHY_SECRET_RAFT:-DevOnlyRaftSecret0123456789}
+      HQL_SECRET_API: ${RAUTHY_SECRET_API:-DevOnlyApiSecret0123456789}
+      BOOTSTRAP_ADMIN_EMAIL: ${RAUTHY_ADMIN_EMAIL:-admin@localhost}
+      BOOTSTRAP_ADMIN_PASSWORD_PLAIN: ${RAUTHY_ADMIN_PASSWORD:-DevAdmin.123456}
+      LOG_LEVEL: ${RAUTHY_LOG_LEVEL:-info}
+    ports:
+      - "${RAUTHY_PORT:-8080}:8080"
+    volumes:
+      # Rauthy panics at startup without a config file, whatever the environment carries.
+      - ./rauthy/config.toml:/app/config.toml:ro
+      - rauthy-data:/app/data
+    # No healthcheck: the image carries the `rauthy` binary and nothing else — no shell, no curl, no health subcommand — so no container-internal probe can run.
+    # Readiness is `GET /auth/v1/.well-known/openid-configuration` from outside.
+
+volumes:
+  rauthy-data:

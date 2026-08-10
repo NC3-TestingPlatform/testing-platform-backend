@@ -1,0 +1,19 @@
+services:
+  redis:
+    image: redis:8-trixie
+    extends:
+      file: common.yml
+      service: defaults
+    # Redis holds only state whose loss costs a page refresh, so persistence stays off.
+    # The image already defaults to no RDB and no AOF; stating it keeps a future image default from quietly introducing a dump file.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    # Nothing to flush to disk.
+    stop_grace_period: 5s

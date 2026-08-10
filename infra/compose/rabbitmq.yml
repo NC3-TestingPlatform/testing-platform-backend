@@ -1,0 +1,28 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.3-management-alpine
+    extends:
+      file: common.yml
+      service: defaults
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-rabbitmq}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitmq}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      # Management UI, the -management tag's reason for being.
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      # The image ships no HEALTHCHECK.
+      # check_port_connectivity matches what a consumer waits for: listeners accepting, not merely the runtime alive.
+      # Every CLI probe pays an Erlang distribution join, so the interval stays wide.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 60s
+
+volumes:
+  rabbitmq-data:

@@ -1,0 +1,107 @@
+# TODO: AI generated for quick tests, make a docs-first implementation before merge
+
+# One worker class per egress profile, each consuming exactly one queue.
+# Queue names and pool choices are fixed by the egress-segregated task queues decision; a module never selects its own queue.
+#
+# Compose expresses only the coarsest of the four egress profiles: an internal network blocks all outbound traffic, but "public internet with RFC1918 blocked" and "SMTP relay and org webhooks only" need firewall rules the container runtime does not model.
+# The network layer remains the authoritative SSRF control, so these definitions are not the enforcement boundary.
+#
+# The `x-worker` anchor resolves only within this file; cross-file reuse goes through `extends`.
+
+# All five services run the same image and differ only in queue and pool.
+# Exactly one service declares `build`, and Compose builds it before starting anything; the rest resolve the tag locally.
+# A `build` on each service instead tags five images from one context, so rebuilding one leaves the others on last build's code, and five concurrent exports of the same tag race against each other.
+x-worker: &worker
+  image: nc3-testing-platform-worker:local
+  extends:
+    file: common.yml
+    service: defaults
+  environment: &worker-env
+    CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+    REDIS_URL: redis://redis:6379/0
+    SCAN_TASK_TIMEOUT_SECONDS: ${SCAN_TASK_TIMEOUT_SECONDS:-120}
+    SCAN_JOB_TIMEOUT_SECONDS: ${SCAN_JOB_TIMEOUT_SECONDS:-900}
+    SCAN_HEARTBEAT_INTERVAL_SECONDS: ${SCAN_HEARTBEAT_INTERVAL_SECONDS:-5}
+    SCAN_STALE_AFTER_SECONDS: ${SCAN_STALE_AFTER_SECONDS:-30}
+    SCAN_SWEEP_INTERVAL_SECONDS: ${SCAN_SWEEP_INTERVAL_SECONDS:-15}
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  # Long enough for an in-flight scan to be killed and its partial results written before the runtime sends SIGKILL.
+  stop_grace_period: 120s
+
+services:
+  worker-non-intrusive-scan:
+    <<: *worker
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=non-intrusive-scan
+      - --pool=gevent
+      - --concurrency=${CELERY_GEVENT_CONCURRENCY:-100}
+      - --hostname=non-intrusive-scan@%h
+
+  worker-intrusive-scan:
+    <<: *worker
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=intrusive-scan
+      - --pool=gevent
+      - --concurrency=${CELERY_GEVENT_CONCURRENCY:-100}
+      - --hostname=intrusive-scan@%h
+
+  worker-file-analysis:
+    <<: *worker
+    # Prefork gives each hostile file its own process to escape from.
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=file-analysis
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=file-analysis@%h
+
+  worker-platform:
+    <<: *worker
+    # The single build of the shared image, for every service above as well.
+    build:
+      context: ../..
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - worker
+      - --queues=platform
+      - --pool=prefork
+      - --concurrency=${CELERY_PREFORK_CONCURRENCY:-4}
+      - --hostname=platform@%h
+
+  beat:
+    <<: *worker
+    # Scheduled dispatch and the enqueue reaper.
+    # Exactly one replica: a second beat double-publishes every periodic task.
+    command:
+      - celery
+      - -A
+      - nc3_testing_platform.worker.app
+      - beat
+      - --loglevel=INFO
+      # Last-run times outlive the container, so a restart does not re-fire every periodic task at once.
+      - --schedule=/var/lib/celery/beat-schedule
+    volumes:
+      - beat-schedule:/var/lib/celery
+
+volumes:
+  beat-schedule:

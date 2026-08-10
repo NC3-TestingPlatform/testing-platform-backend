@@ -1,7 +1,22 @@
-.PHONY: dev export-openapi lint typecheck test
+.PHONY: dev export-openapi lint typecheck test up down logs scan
 
 dev:
 	uv run fastapi dev src/nc3_testing_platform/main.py
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
+
+# make scan DOMAIN=example.com
+DOMAIN ?= example.com
+scan:
+	docker compose exec -T worker-platform \
+		celery -A nc3_testing_platform.worker.app call scan.dispatch --args='["$(DOMAIN)"]'
 
 export-openapi:
 	uv run export-openapi
