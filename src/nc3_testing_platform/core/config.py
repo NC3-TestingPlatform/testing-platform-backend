@@ -25,8 +25,10 @@ def _positive_int(name: str, default: int) -> int:
         raise RuntimeError(
             f"{name} must be an integer number of days, got {raw!r}."
         ) from None
-    if value < 1:
-        raise RuntimeError(f"{name} must be at least 1, got {value}.")
+    # The cap keeps every value well inside timedelta's range, so an absurd
+    # setting fails with this message rather than an OverflowError.
+    if not 1 <= value <= 36500:
+        raise RuntimeError(f"{name} must be between 1 and 36500 days, got {value}.")
     return value
 
 

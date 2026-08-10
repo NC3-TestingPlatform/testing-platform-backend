@@ -57,9 +57,16 @@ def uuid_pk() -> Mapped[uuid.UUID]:
 
 
 def _db_enum(enum_cls: type[StrEnum], name: str) -> sa.Enum:
-    """A PostgreSQL enum type carrying the member values, not the member names."""
+    """A PostgreSQL enum type carrying the member values, not the member names.
+
+    Bound to `Base.metadata` so metadata-level operations create and drop each
+    shared type exactly once, instead of once per table that uses it.
+    """
     return sa.Enum(
-        enum_cls, name=name, values_callable=lambda e: [member.value for member in e]
+        enum_cls,
+        name=name,
+        metadata=Base.metadata,
+        values_callable=lambda e: [member.value for member in e],
     )
 
 

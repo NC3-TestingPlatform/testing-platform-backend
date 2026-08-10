@@ -23,7 +23,7 @@ class Finding(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     scan_result_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("scan_result.id", ondelete="CASCADE")

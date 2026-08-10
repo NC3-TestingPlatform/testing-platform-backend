@@ -35,9 +35,16 @@ def _valid_recurrence_rule(value: str | None) -> str | None:
     """
     if value is None:
         return None
+    # One bare rule only: rrulestr also swallows RRULE:/DTSTART/EXDATE lines
+    # and whole multi-line rule sets, which are not what this field stores.
+    if any(character in value for character in ":\r\n"):
+        raise ValueError(
+            "Provide a single bare RRULE without the `RRULE:` prefix or other "
+            "calendar properties."
+        )
     try:
         rrulestr(value)
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, KeyError, IndexError) as exc:
         raise ValueError(f"Not a valid RFC 5545 recurrence rule: {exc}") from exc
     return value
 

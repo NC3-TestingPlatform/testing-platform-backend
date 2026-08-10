@@ -24,13 +24,13 @@ class Schedule(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     asset_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("asset.id", ondelete="RESTRICT")
+        sa.ForeignKey("asset.id", ondelete="RESTRICT"), index=True
     )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     modules: Mapped[list[enums.ScanModule]] = mapped_column(ARRAY(SCAN_MODULE))
     module_configuration: Mapped[dict[str, Any]] = mapped_column(
@@ -41,7 +41,8 @@ class Schedule(Base):
     # IANA timezone name.
     timezone: Mapped[str]
     enabled: Mapped[bool] = mapped_column(server_default=sa.true())
-    next_run_at: Mapped[datetime | None]
+    # Indexed for the scheduler's due-run poll.
+    next_run_at: Mapped[datetime | None] = mapped_column(index=True)
     created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=sa.func.now(), onupdate=sa.func.now()

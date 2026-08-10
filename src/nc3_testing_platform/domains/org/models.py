@@ -46,7 +46,7 @@ class AppUser(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     identity_subject: Mapped[str] = mapped_column(unique=True)
     email: Mapped[str]
@@ -98,8 +98,10 @@ class KeyEnvelope(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     scope: Mapped[enums.KeyScope] = mapped_column(KEY_SCOPE)
+    # The partial unique index covers only organization-scope rows; cascade
+    # maintenance and user-envelope lookups by organization need the full index.
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("organization.id", ondelete="CASCADE")
+        sa.ForeignKey("organization.id", ondelete="CASCADE"), index=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("app_user.id", ondelete="CASCADE"), unique=True
@@ -142,7 +144,7 @@ class OrganizationInvitation(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        sa.ForeignKey("organization.id")
+        sa.ForeignKey("organization.id"), index=True
     )
     email: Mapped[str]
     organization_role: Mapped[enums.OrganizationRole] = mapped_column(
@@ -150,11 +152,11 @@ class OrganizationInvitation(Base):
     )
     token_hash: Mapped[str] = mapped_column(unique=True)
     invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     expires_at: Mapped[datetime]
     accepted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("app_user.id", ondelete="SET NULL")
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
     )
     accepted_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]

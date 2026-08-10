@@ -121,6 +121,9 @@ async def resolve_launch_body(
         # A plain string field named `file` is not a file part. The parsed form
         # holds Starlette's UploadFile (FastAPI's is a subclass used for typing).
         if not isinstance(upload, StarletteUploadFile):
+            # The parse already spooled any file parts to disk; release them
+            # before rejecting, or every bad request leaks its temp files.
+            await form.close()
             raise _invalid(("body", "file"), "A file part is required.")
         try:
             yield ResolvedLaunch(
