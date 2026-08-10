@@ -1,0 +1,19 @@
+# Cross-cutting service defaults, pulled in with `extends`.
+#
+# This file stays out of the root `include:` list.
+# Compose copies every service of an included file into the project, so listing it there would start `defaults` as a real container.
+#
+# A YAML anchor resolves within one document, so `<<: *alias` pointing at another file fails with "unknown anchor"; `extends` is the only mechanism that reaches across files.
+#
+# Keep this to scalars.
+# `extends` copies `depends_on` without importing the service it names, which turns into "depends on undefined service".
+
+services:
+  defaults:
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

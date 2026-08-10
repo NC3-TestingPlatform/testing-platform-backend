@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:18.4-trixie
+    extends:
+      file: common.yml
+      service: defaults
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-nc3_testing_platform}
+    ports:
+      # Loopback only: development credentials must not answer on LAN interfaces.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 moved PGDATA to /var/lib/postgresql/18/docker and the image VOLUME to the parent.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # initdb runs a temporary server on the Unix socket only, which answers pg_isready before the TCP listener exists.
+      start_period: 30s
+    stop_grace_period: 60s
+
+volumes:
+  postgres-data:

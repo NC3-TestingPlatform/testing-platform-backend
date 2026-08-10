@@ -1,0 +1,30 @@
+services:
+  api:
+    image: nc3-testing-platform-api:local
+    build:
+      context: ../..
+      target: api
+    extends:
+      file: common.yml
+      service: defaults
+    environment:
+      # The mock handlers use none of these yet; they are wired now so the ORM
+      # (issue #2) and scan-launch work change code, not the compose stack.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
+      REDIS_URL: redis://redis:6379/0
+      # Service hostname, not localhost: the API reaches Rauthy over the
+      # Compose network. Browsers still use the host-mapped localhost URL.
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-http://rauthy:8080/auth/v1/.well-known/openid-configuration}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The API image carries no curl; the interpreter it runs on probes its own liveness route.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
