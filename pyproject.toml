@@ -15,11 +15,13 @@ export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 
 [dependency-groups]
 dev = [
+    "defusedxml>=0.7.1",
     "httpx2>=2.9.1",
     "jsonschema>=4.26.0",
     "openapi-spec-validator>=0.9.0",
     "pyright>=1.1.411",
     "pytest>=9.1.1",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.16.0",
 ]
 
