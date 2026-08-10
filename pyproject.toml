@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pydantic[email]>=2.13.4",
     "python-dateutil>=2.9.0.post0",
+    "redis>=5",
     "sqlalchemy>=2.0",
     "tzdata>=2026.3",
     "uuid6>=2025.0.1",
@@ -24,6 +25,7 @@ export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 [dependency-groups]
 dev = [
     "defusedxml>=0.7.1",
+    "fakeredis>=2.26",
     "httpx2>=2.9.1",
     "jsonschema>=4.26.0",
     "openapi-spec-validator>=0.9.0",
@@ -47,6 +49,11 @@ convention = "google"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "redis: needs a real Redis at REDIS_URL (deselected by default; CI runs it against a service container)",
+]
+# The default run needs no services; `pytest -m redis` (a later -m wins) opts in.
+addopts = '-m "not redis"'
 
 [tool.pyright]
 include = ["src", "tests"]
