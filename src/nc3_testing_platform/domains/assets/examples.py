@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from pydantic import AnyUrl
+
 from nc3_testing_platform.core.config import (
     VERIFICATION_TOKEN_TTL,
     verification_record_name,
@@ -131,5 +133,5 @@ def sample_feed_created() -> AssetFeedCreated:
     return AssetFeedCreated(
         **sample_feed().model_dump(),
         token="fd_9xK2mQ7pL4vR8nT1",
-        feed_url="https://api.testing.nc3.lu/api/v1/feeds/fd_9xK2mQ7pL4vR8nT1",
+        feed_url=AnyUrl("https://api.testing.nc3.lu/api/v1/feeds/fd_9xK2mQ7pL4vR8nT1"),
     )

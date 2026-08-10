@@ -22,6 +22,7 @@ from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     ANONYMOUS_ALTERNATIVE,
+    NO_STORE_HEADERS,
     CredentialRequired,
     OptionallyAuthenticated,
     rate_limited,
@@ -93,6 +94,7 @@ LAUNCH_REQUEST_BODY: dict[str, Any] = {
 # mapping.
 _EVENT_STREAM_RESPONSE: dict[int | str, dict] = {
     200: {
+        "headers": NO_STORE_HEADERS,
         "description": (
             "Advisory progress events until the job reaches a terminal state. The "
             "SSE `event:` line selects the payload:\n\n"
@@ -123,17 +125,17 @@ _EVENT_STREAM_RESPONSE: dict[int | str, dict] = {
     "",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Launch a scan",
-    response_model=ScanJobAccepted,
     openapi_extra={
         "requestBody": LAUNCH_REQUEST_BODY,
         "security": ANONYMOUS_ALTERNATIVE,
     },
     responses={
+        202: {"headers": NO_STORE_HEADERS},
         **problem_responses(403, 415, 422),
         **rate_limited(),
     },
 )
-async def launch_scan(launch: ScanLaunchBody) -> ScanJobAccepted:
+async def launch_scan(launch: ScanLaunchBody, response: Response) -> ScanJobAccepted:
     """Launch a domain or file scan.
 
     Returns `202` with the job resource. An unauthenticated launch also returns the
@@ -146,6 +148,7 @@ async def launch_scan(launch: ScanLaunchBody) -> ScanJobAccepted:
     assurance, rate, and cooldown — are evaluated from the request context and the
     selected tests. None of them is a field the caller sends.
     """
+    response.headers["Cache-Control"] = "no-store"
     return examples.queued_job_accepted(
         guest=not launch.authenticated,
         file_scan=isinstance(launch.body, FileScanLaunch),
@@ -227,7 +230,11 @@ async def stream_scan_events(
         for name, event in _sample_events():
             yield f"event: {name}\ndata: {event.model_dump_json()}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _sample_events() -> list[tuple[str, BaseModel]]:

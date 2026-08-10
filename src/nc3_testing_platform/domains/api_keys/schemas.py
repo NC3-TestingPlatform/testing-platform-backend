@@ -68,7 +68,7 @@ class ApiKeyCreated(ApiKey):
 
     secret: str = Field(
         description="Plaintext key. Shown once; only a hash is stored.",
-        examples=["nc3_sk_live_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY"],
+        examples=["nc3_ak_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY"],
     )
 
 

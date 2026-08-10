@@ -11,7 +11,11 @@ from nc3_testing_platform.core.enums import VerificationStatus
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import CredentialRequired, OidcRequired
+from nc3_testing_platform.core.security import (
+    NO_STORE_HEADERS,
+    CredentialRequired,
+    OidcRequired,
+)
 from nc3_testing_platform.domains.assets import examples
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
@@ -203,17 +207,21 @@ async def list_asset_feeds(asset_id: ResourceId) -> list[AssetFeed]:
     "/{asset_id}/feeds",
     status_code=status.HTTP_201_CREATED,
     summary="Create a feed",
-    responses=problem_responses(401, 404, 422),
+    responses={
+        201: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 404, 422),
+    },
     dependencies=[CredentialRequired],
 )
 async def create_asset_feed(
-    asset_id: ResourceId, body: AssetFeedCreate
+    asset_id: ResourceId, body: AssetFeedCreate, response: Response
 ) -> AssetFeedCreated:
     """Create a syndication feed.
 
     The response is the only time the token and URL are readable; only the hash is
     stored. A lost token is replaced by revoking and creating another.
     """
+    response.headers["Cache-Control"] = "no-store"
     return examples.sample_feed_created()
 
 
@@ -241,6 +249,7 @@ async def revoke_asset_feed(asset_id: ResourceId, feed_id: ResourceId) -> AssetF
     responses={
         200: {
             "description": "RSS or Atom document, per the feed's configured format.",
+            "headers": NO_STORE_HEADERS,
             "content": {
                 "application/rss+xml": {"schema": {"type": "string"}},
                 "application/atom+xml": {"schema": {"type": "string"}},
@@ -258,4 +267,5 @@ async def get_feed(token: str) -> Response:
     return Response(
         content='<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom"/>\n',
         media_type="application/atom+xml",
+        headers={"Cache-Control": "no-store"},
     )

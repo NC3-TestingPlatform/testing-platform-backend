@@ -11,10 +11,15 @@ account, which is why there is no notification-settings resource to configure.
 
 from typing import Any
 
-from pydantic import AnyHttpUrl, BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from nc3_testing_platform.core.enums import OrganizationRole
-from nc3_testing_platform.core.schemas import BaseSchema, ResourceId, Timestamp
+from nc3_testing_platform.core.schemas import (
+    BaseSchema,
+    HttpsUrl,
+    ResourceId,
+    Timestamp,
+)
 
 
 class Notification(BaseSchema):
@@ -79,7 +84,7 @@ class OrganizationWebhook(BaseSchema):
 
     id: ResourceId
     organization_id: ResourceId
-    endpoint_url: AnyHttpUrl
+    endpoint_url: HttpsUrl
     created_by_user_id: ResourceId | None = None
     created_at: Timestamp
     updated_at: Timestamp
@@ -91,7 +96,7 @@ class OrganizationWebhookUpsert(BaseModel):
     A `PUT` rather than a `POST`, because an organization has zero or one of these
     """
 
-    endpoint_url: AnyHttpUrl
+    endpoint_url: HttpsUrl
     signing_secret: str = Field(
         min_length=32,
         description=(

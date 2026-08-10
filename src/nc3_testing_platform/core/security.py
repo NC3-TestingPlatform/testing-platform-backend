@@ -153,6 +153,15 @@ OptionallyAuthenticated = Depends(read_optional_credentials)
 # without credentials.
 ANONYMOUS_ALTERNATIVE: list[dict[str, list[str]]] = [{}]
 
+# Declared on a response no cache may store: secret-bearing bodies and feed delivery.
+NO_STORE_HEADERS: dict[str, dict] = {
+    "Cache-Control": {
+        "schema": {"type": "string"},
+        "description": "Always `no-store`.",
+    }
+}
+
+
 # IETF-draft rate-limit headers, surfaced on quota-bearing responses. Counters
 # themselves live in the anti-abuse subsystem, outside this model.
 RATE_LIMIT_HEADERS: dict[str, dict] = {

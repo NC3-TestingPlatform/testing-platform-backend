@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 
 from nc3_testing_platform.core.security import ApiKeyAuth, OidcAuth
 from nc3_testing_platform.domains.scans.schemas import (
+    CLAIM_TOKEN_PATTERN,
     AssetScanLaunch,
     FileScanLaunch,
     GuestScanLaunch,
@@ -41,6 +42,7 @@ ScanAccessToken = Annotated[
     str | None,
     Query(
         alias="claim_token",
+        pattern=CLAIM_TOKEN_PATTERN,
         description=(
             "One-time token returned by an unauthenticated launch. Required to read "
             "a guest scan that has not been claimed; ignored when the caller is "

@@ -11,10 +11,15 @@ import idna
 from pydantic import (
     UUID7,
     AfterValidator,
+    AnyUrl,
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    StringConstraints,
+    UrlConstraints,
+    WithJsonSchema,
 )
 
 # Wire values are UUIDv7, which is time-sortable.
@@ -51,7 +56,30 @@ def _parse_domain_name(value: str) -> str:
 # A domain in canonical form: lowercase IDNA A-labels, no trailing dot. Parsing
 # happens at the boundary, so `asset.value` and the `target_domain` columns never
 # hold a non-canonical spelling that would defeat their uniqueness rules.
-DomainName = Annotated[str, AfterValidator(_parse_domain_name)]
+# The published `maxLength` bounds the raw input; the validator bounds the A-label form.
+DomainName = Annotated[
+    str, StringConstraints(max_length=253), AfterValidator(_parse_domain_name)
+]
+
+
+def _require_lowercase_https(value: object) -> object:
+    """Rejects a URL not spelled with a lowercase `https://` prefix.
+
+    `UrlConstraints` compares the scheme after parsing has lowercased it, so it alone accepts `HTTPS://`, which the published `^https://` pattern refuses.
+    """
+    if isinstance(value, str) and not value.startswith("https://"):
+        raise ValueError("Use the `https` scheme, spelled in lowercase.")
+    return value
+
+
+# The platform publishes and accepts `https` URLs only: webhook endpoints carry
+# signed security payloads, and feed URLs embed a capability token.
+HttpsUrl = Annotated[
+    AnyUrl,
+    UrlConstraints(allowed_schemes=["https"]),
+    BeforeValidator(_require_lowercase_https),
+    WithJsonSchema({"type": "string", "format": "uri", "pattern": "^https://"}),
+]
 
 
 class BaseSchema(BaseModel):

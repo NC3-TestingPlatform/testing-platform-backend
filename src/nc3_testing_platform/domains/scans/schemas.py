@@ -17,7 +17,7 @@ Each such field is marked `TODO` naming its owner and what unblocks it.
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from nc3_testing_platform.core.enums import (
     FindingSeverity,
@@ -38,6 +38,9 @@ from nc3_testing_platform.core.schemas import (
     Timestamp,
 )
 from nc3_testing_platform.domains.statements.schemas import StatementResponseSubmission
+
+# 256 bits of randomness, base64url without padding.
+CLAIM_TOKEN_PATTERN = r"^[A-Za-z0-9_-]{43}$"
 
 _STATEMENT_RESPONSES_DESCRIPTION = (
     "Answers to the statements this launch requires, each identified by key and "
@@ -232,6 +235,17 @@ class ScanTask(BaseSchema):
     started_at: Timestamp | None = None
     finished_at: Timestamp | None = None
 
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "ScanTask":
+        """Rejects a task carrying zero or several targets."""
+        targets = (self.target_asset_id, self.target_domain, self.file_upload_id)
+        if sum(value is not None for value in targets) != 1:
+            raise ValueError(
+                "Exactly one of `target_asset_id`, `target_domain`, and "
+                "`file_upload_id` is set."
+            )
+        return self
+
 
 class ScanJob(BaseSchema):
     """One submitted scan request.
@@ -315,6 +329,17 @@ class ScanJob(BaseSchema):
     started_at: Timestamp | None = None
     finished_at: Timestamp | None = None
 
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "ScanJob":
+        """Rejects a job carrying zero or several targets."""
+        targets = (self.asset_id, self.target_domain, self.file_upload_id)
+        if sum(value is not None for value in targets) != 1:
+            raise ValueError(
+                "Exactly one of `asset_id`, `target_domain`, and `file_upload_id` "
+                "is set."
+            )
+        return self
+
 
 class ScanJobAccepted(ScanJob):
     """The `202` body of a launch.
@@ -325,6 +350,7 @@ class ScanJobAccepted(ScanJob):
 
     claim_token: str | None = Field(
         default=None,
+        pattern=CLAIM_TOKEN_PATTERN,
         description=(
             "One-time token that claims this scan for an organization once the "
             "guest registers. Present only on the response to an unauthenticated "
@@ -357,7 +383,10 @@ class _DomainLaunch(BaseModel):
     """
 
     modules: list[ScanModule] = Field(
-        min_length=1, description="One or more modules to run against the target."
+        min_length=1,
+        max_length=5,
+        json_schema_extra={"uniqueItems": True},
+        description="One or more distinct modules to run against the target.",
     )
     module_configuration: dict[str, Any] = Field(
         default_factory=dict,
@@ -367,7 +396,9 @@ class _DomainLaunch(BaseModel):
         ),
     )
     statement_responses: list[StatementResponseSubmission] = Field(
-        default_factory=list, description=_STATEMENT_RESPONSES_DESCRIPTION
+        default_factory=list,
+        max_length=50,
+        description=_STATEMENT_RESPONSES_DESCRIPTION,
     )
 
     @field_validator("modules")
@@ -384,6 +415,8 @@ class _DomainLaunch(BaseModel):
                 "The `file` module analyzes an upload, not a domain. Launch it with "
                 "a `multipart/form-data` request instead."
             )
+        if len(set(modules)) != len(modules):
+            raise ValueError("Each module appears at most once.")
         return modules
 
 
@@ -444,6 +477,7 @@ class ScanClaimRequest(BaseModel):
     """
 
     claim_token: str = Field(
+        pattern=CLAIM_TOKEN_PATTERN,
         description="The one-time token returned by the unauthenticated launch.",
         examples=["9xK2mQ7pL4vR8nT1jH5gF3dS6aW0zYbUcElOnAiKrXs"],
     )

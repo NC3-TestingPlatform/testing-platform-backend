@@ -32,6 +32,14 @@
                   "$ref": "#/components/schemas/ScanJobAccepted"
                 }
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
             }
           },
           "403": {
@@ -237,7 +245,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{43}$"
                 },
                 {
                   "type": "null"
@@ -391,7 +400,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{43}$"
                 },
                 {
                   "type": "null"
@@ -476,7 +486,8 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{43}$"
                 },
                 {
                   "type": "null"
@@ -491,6 +502,14 @@
         "responses": {
           "200": {
             "description": "Advisory progress events until the job reaches a terminal state. The SSE `event:` line selects the payload:\n\n- `task` → `ScanTaskEvent`, one task changed state\n- `job` → `ScanJobEvent`, the job changed state\n- `heartbeat` → `ScanHeartbeatEvent`, sent on an interval\n- `end` → `ScanEndEvent`, terminal state reached, no further events\n\nDatabase state is authoritative. Refetch the snapshot after a reconnect or whenever an applied event leaves the client uncertain.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -1746,6 +1765,14 @@
                   "$ref": "#/components/schemas/AssetFeedCreated"
                 }
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
             }
           },
           "401": {
@@ -1895,6 +1922,14 @@
         "responses": {
           "200": {
             "description": "RSS or Atom document, per the feed's configured format.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
+            },
             "content": {
               "application/rss+xml": {
                 "schema": {
@@ -4175,6 +4210,14 @@
                   "$ref": "#/components/schemas/ApiKeyCreated"
                 }
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
             }
           },
           "401": {
@@ -4982,7 +5025,7 @@
             "title": "Secret",
             "description": "Plaintext key. Shown once; only a hash is stored.",
             "examples": [
-              "nc3_sk_live_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY"
+              "nc3_ak_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY"
             ]
           }
         },
@@ -5044,6 +5087,7 @@
           },
           "value": {
             "type": "string",
+            "maxLength": 253,
             "title": "Value",
             "description": "Canonical domain: lowercase IDNA (A-label) form without a trailing dot.",
             "examples": [
@@ -5114,6 +5158,7 @@
         "properties": {
           "value": {
             "type": "string",
+            "maxLength": 253,
             "title": "Value",
             "description": "Domain to monitor. Unicode or ASCII input is accepted and canonicalized to lowercase IDNA (A-label) form without a trailing dot.",
             "examples": [
@@ -5277,6 +5322,8 @@
           },
           "feed_url": {
             "type": "string",
+            "pattern": "^https://",
+            "format": "uri",
             "title": "Feed Url",
             "description": "Fully-qualified URL to subscribe to. Shown once.",
             "examples": [
@@ -6003,7 +6050,7 @@
           },
           "endpoint_url": {
             "type": "string",
-            "minLength": 1,
+            "pattern": "^https://",
             "format": "uri",
             "title": "Endpoint Url"
           },
@@ -6045,7 +6092,7 @@
         "properties": {
           "endpoint_url": {
             "type": "string",
-            "minLength": 1,
+            "pattern": "^https://",
             "format": "uri",
             "title": "Endpoint Url"
           },
@@ -6613,6 +6660,7 @@
         "properties": {
           "claim_token": {
             "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
             "title": "Claim Token",
             "description": "The one-time token returned by the unauthenticated launch.",
             "examples": [
@@ -6728,7 +6776,8 @@
           "target_domain": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 253
               },
               {
                 "type": "null"
@@ -6934,7 +6983,8 @@
           "target_domain": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 253
               },
               {
                 "type": "null"
@@ -7053,7 +7103,8 @@
           "claim_token": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
               },
               {
                 "type": "null"
@@ -7155,7 +7206,8 @@
           "target_domain": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 253
               },
               {
                 "type": "null"
@@ -7461,7 +7513,8 @@
           "target_domain": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 253
               },
               {
                 "type": "null"
@@ -8127,13 +8180,15 @@
         "description": "Authenticated domain launch.\n\nSelected by `application/json` plus an authenticated caller.",
         "properties": {
           "modules": {
-            "description": "One or more modules to run against the target.",
+            "description": "One or more distinct modules to run against the target.",
             "items": {
               "$ref": "#/components/schemas/ScanModule"
             },
+            "maxItems": 5,
             "minItems": 1,
             "title": "Modules",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "module_configuration": {
             "additionalProperties": true,
@@ -8146,6 +8201,7 @@
             "items": {
               "$ref": "#/components/schemas/StatementResponseSubmission"
             },
+            "maxItems": 50,
             "title": "Statement Responses",
             "type": "array"
           },
@@ -8188,13 +8244,15 @@
         "description": "Unauthenticated domain launch.\n\nSelected by `application/json` plus an anonymous caller.\n\nFree target text exists in this context and nowhere else. The domain is stored\non the job and never becomes an Asset row. Guest launches run non-intrusive\ntests only, which in v4.0 is every domain test.",
         "properties": {
           "modules": {
-            "description": "One or more modules to run against the target.",
+            "description": "One or more distinct modules to run against the target.",
             "items": {
               "$ref": "#/components/schemas/ScanModule"
             },
+            "maxItems": 5,
             "minItems": 1,
             "title": "Modules",
-            "type": "array"
+            "type": "array",
+            "uniqueItems": true
           },
           "module_configuration": {
             "additionalProperties": true,
@@ -8207,6 +8265,7 @@
             "items": {
               "$ref": "#/components/schemas/StatementResponseSubmission"
             },
+            "maxItems": 50,
             "title": "Statement Responses",
             "type": "array"
           },
@@ -8215,6 +8274,7 @@
             "examples": [
               "example.lu"
             ],
+            "maxLength": 253,
             "title": "Target",
             "type": "string"
           }

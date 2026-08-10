@@ -21,6 +21,7 @@ from nc3_testing_platform.core.enums import (
 from nc3_testing_platform.core.schemas import (
     BaseSchema,
     DomainName,
+    HttpsUrl,
     ResourceId,
     Timestamp,
 )
@@ -213,7 +214,7 @@ class AssetFeedCreated(AssetFeed):
     """
 
     token: str = Field(description="Plaintext feed token. Shown once.")
-    feed_url: str = Field(
+    feed_url: HttpsUrl = Field(
         description="Fully-qualified URL to subscribe to. Shown once.",
         examples=["https://api.testing.nc3.lu/api/v1/feeds/fd_9xK2mQ7pL4vR8nT1"],
     )

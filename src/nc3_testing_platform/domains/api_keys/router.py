@@ -7,13 +7,17 @@ at request time.
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 
 from nc3_testing_platform.core.enums import ApiKeyScope
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import CredentialRequired, OidcRequired
+from nc3_testing_platform.core.security import (
+    NO_STORE_HEADERS,
+    CredentialRequired,
+    OidcRequired,
+)
 from nc3_testing_platform.domains.api_keys.schemas import (
     ApiKey,
     ApiKeyCreate,
@@ -39,7 +43,7 @@ def _sample_key(revoked: bool = False) -> ApiKey:
         created_by_user_id=USER_ID,
         name="CI pipeline",
         scope=ApiKeyScope.FULL_SCAN,
-        key_prefix="nc3_sk_live_7pL4",
+        key_prefix="nc3_ak_7pL4",
         revoked_at=_T if revoked else None,
         revocation_reason="Rotated" if revoked else None,
         last_used_at=datetime(2026, 7, 31, 8, 55, tzinfo=UTC),
@@ -66,18 +70,22 @@ async def list_api_keys(page: CursorPage) -> Page[ApiKey]:
     "",
     status_code=status.HTTP_201_CREATED,
     summary="Create an API key",
-    responses=problem_responses(401, 403, 422),
+    responses={
+        201: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 422),
+    },
     dependencies=[OidcRequired],
 )
-async def create_api_key(body: ApiKeyCreate) -> ApiKeyCreated:
+async def create_api_key(body: ApiKeyCreate, response: Response) -> ApiKeyCreated:
     """Issue a key and return its secret once.
 
     Requires current MFA assurance. Creating an organization key additionally
     requires the `organization_admin` role.
     """
+    response.headers["Cache-Control"] = "no-store"
     return ApiKeyCreated(
         **_sample_key().model_dump(),
-        secret="nc3_sk_live_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY",
+        secret="nc3_ak_7pL4vR8nT1mQ2xK9jH5gF3dS6aW0zY",
     )
 
 
