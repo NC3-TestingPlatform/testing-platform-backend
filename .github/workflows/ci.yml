@@ -83,3 +83,45 @@ jobs:
         run: |
           uv run --locked alembic downgrade base
           uv run --locked alembic upgrade head
+
+  # Taiga #160: the stack must come up from a clean checkout, gated on the
+  # containers' own healthchecks (--wait fails the step if any goes unhealthy),
+  # and prove one job round-trips broker -> workers -> PostgreSQL.
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and start the stack, gated on healthchecks
+        run: docker compose up -d --build --wait
+
+      - name: API liveness answers from the host
+        run: curl -sSf http://127.0.0.1:8000/healthz
+
+      - name: Scan round trip lands in PostgreSQL
+        run: |
+          make scan DOMAIN=ci-smoke.example
+          for attempt in $(seq 1 30); do
+            count=$(docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
+              -tAc "SELECT count(*) FROM scan_artifacts WHERE domain = 'ci-smoke.example'" 2>/dev/null || echo 0)
+            if [ "${count:-0}" -ge 1 ]; then
+              echo "artifact persisted after ${attempt} polls"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::no scan artifact appeared within 60s" >&2
+          exit 1
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --tail 150
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
