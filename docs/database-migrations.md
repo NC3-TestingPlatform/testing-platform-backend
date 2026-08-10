@@ -17,8 +17,10 @@ make db-current                       # where this database is
 make db-history                       # the revision chain
 ```
 
-All of them read `DATABASE_URL` (same variable as the application) and default
-to the local Compose PostgreSQL.
+All of them read `DATABASE_URL` (same variable as the application); the Make
+targets default it to the local Compose PostgreSQL. Calling `alembic` directly
+requires it set — `migrations/env.py` refuses to run without one, because a
+`downgrade` against a silently-defaulted database drops every table.
 
 ## What needs a revision
 

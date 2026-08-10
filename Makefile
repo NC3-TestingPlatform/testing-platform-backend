@@ -24,7 +24,10 @@ scan:
 		python -c 'import os; from nc3_testing_platform.worker.tasks import dispatch; print(dispatch.delay(os.environ["SCAN_DOMAIN"]).id)'
 
 # Database migrations (docs/database-migrations.md).
-# DATABASE_URL overrides the default local connection everywhere below.
+# migrations/env.py refuses to run without DATABASE_URL (a downgrade against a
+# silently-defaulted database drops every table); the local development value
+# lives here instead, and an exported DATABASE_URL always wins.
+db-%: export DATABASE_URL ?= postgresql+psycopg://postgres:postgres@localhost:5432/nc3_testing_platform
 db-upgrade:
 	uv run alembic upgrade head
 

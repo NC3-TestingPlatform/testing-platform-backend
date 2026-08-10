@@ -6,20 +6,35 @@ DATABASE_URL the application reads; there is no separate migration config to
 drift from the deployment.
 """
 
+import logging.config
 import os
 
 from alembic import context
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, pool
 
 from nc3_testing_platform.models import Base
 
-target_metadata = Base.metadata
+# Load alembic.ini's logging sections, so migration commands narrate what ran.
+if context.config.config_file_name is not None:
+    logging.config.fileConfig(context.config.config_file_name)
 
-_DEFAULT_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/nc3_testing_platform"
+target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    return os.getenv("DATABASE_URL", _DEFAULT_URL)
+    """The target database, from the environment and nowhere else.
+
+    No fallback on purpose: `downgrade base` drops every table, so a missing
+    or misspelled DATABASE_URL must fail here, not silently hit a default.
+    The Makefile's db-* targets supply the local development value.
+    """
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Use the make db-* targets for local "
+            "development, or export the deployment's URL explicitly."
+        )
+    return url
 
 
 def run_migrations_offline() -> None:
@@ -38,7 +53,8 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations against the configured database."""
-    engine = create_engine(_database_url())
+    # One short-lived process, one connection: pooling buys nothing here.
+    engine = create_engine(_database_url(), poolclass=pool.NullPool)
     with engine.connect() as connection:
         context.configure(
             connection=connection,
