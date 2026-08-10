@@ -6,8 +6,6 @@ task can catch, a hard limit slightly above it so cleanup has room, and child
 recycling so leaked native memory dies with the process.
 """
 
-import os
-
 from celery import Celery
 from celery.signals import worker_init
 
@@ -56,4 +54,4 @@ def _preflight(**_kwargs: object) -> None:
     without them rather than let `detect_tools()`-style silent skipping produce
     quietly incomplete scans (US #78 ADR).
     """
-    run_preflight(os.getenv("WORKER_QUEUE", ""))
+    run_preflight(settings.worker_queue)

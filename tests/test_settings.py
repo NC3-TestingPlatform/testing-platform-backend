@@ -36,6 +36,7 @@ def test_defaults_load_from_an_empty_environment(clean_env: pytest.MonkeyPatch) 
     assert loaded.retention_extension_days == 365
     assert loaded.scan_task_timeout_seconds == 120
     assert loaded.celery_max_tasks_per_child == 100
+    assert loaded.worker_queue == ""
     assert loaded.oidc_discovery_url.startswith("https://idp.example.invalid/")
 
 

@@ -8,8 +8,10 @@ of crashing on first use.
 Two ways to supply a value, per 12-factor:
 
 * ``NAME=value`` — the plain environment variable.
-* ``NAME_FILE=/path`` — the value is read from the named file, trailing
-  whitespace stripped. This is the secrets-manager convention: an orchestrator
+* ``NAME_FILE=/path`` — the value is read from the named file, stripped of
+  surrounding whitespace: editors append trailing newlines, and a leading
+  space in a mounted secret is an accident (indentation, copy-paste), never
+  part of the value. This is the secrets-manager convention: an orchestrator
   mounts the secret as a file (e.g. ``/run/secrets/app_encryption_master_key``,
   data-model §1.2) and the environment carries only the path. When both are
   set, the file wins — a mounted secret must not lose to a stale variable.
@@ -117,6 +119,11 @@ class Settings(BaseSettings):
     # Scan execution limits (worker/app.py, US #78 ADR).
     scan_task_timeout_seconds: int = Field(default=120, ge=1)
     celery_max_tasks_per_child: int = Field(default=100, ge=1)
+
+    # The worker process's own egress queue (worker/app.py preflight). Empty
+    # everywhere except in a worker container, where compose pins it; preflight
+    # rejects a worker that cannot name its queue.
+    worker_queue: str = ""
 
     @classmethod
     def settings_customise_sources(

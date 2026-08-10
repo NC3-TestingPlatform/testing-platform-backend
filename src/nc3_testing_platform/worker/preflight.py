@@ -81,7 +81,7 @@ def run_preflight(queue: str) -> None:
 
 
 if __name__ == "__main__":
-    import os
+    from nc3_testing_platform.core.settings import settings
 
-    run_preflight(os.getenv("WORKER_QUEUE", ""))
+    run_preflight(settings.worker_queue)
     print("preflight: ok")
