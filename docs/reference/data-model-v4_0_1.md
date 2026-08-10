@@ -20,7 +20,7 @@ Conventions:
 |------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Organization           | Tenant boundary. Registered users, assets, scan history, schedules, reports, API keys, and organization settings belong to one organization.                                               |
 | AppUser                | The single local user entity. References one identity-provider identity and stores platform-owned user and organization fields.                                                            |
-| UserKeyEnvelope        | Mutable one-to-one record containing a per-user KEK encrypted by the deployment master key. Deleting it makes retained user evidence unrecoverable.                                        |
+| KeyEnvelope            | Mutable scoped key record — one per organization, per user, and per guest scan job — containing that scope's KEK encrypted by the deployment master key. Deleting it makes everything retained under that scope unrecoverable.                                        |
 | Asset                  | Organization-owned monitored target. v4.0 assets are domains.                                                                                                                              |
 | OrganizationInvitation | Pending invitation to join one organization with one organization role.                                                                                                                    |
 | ScanJob                | One submitted scan request.                                                                                                                                                                |
@@ -42,7 +42,7 @@ Conventions:
 | Executable-test registry          | Test key, version, module, classification, configuration schema, result schema                 | Immutable execution metadata copied to `scan_task`.                                                                               |
 | Temporary file storage            | Uploaded file bytes referenced by a storage key; purge completion                              | `file_upload` metadata, storage reference, and purge timestamps.                                                                  |
 | Scan queue and workers            | `scan_task.id` as the queue task identifier, plus task configuration                           | Task status, cancellation outcome, `scan_result`, and `finding` rows. Queue topology and transport stay queue-owned.              |
-| Deployment master-key file        | Versioned 256-bit master key mounted read-only at `/run/secrets/app_encryption_master_key`     | Used in memory to encrypt or decrypt `user_key_envelope.wrapped_kek`. Only `master_key_version` is stored in PostgreSQL.          |
+| Deployment master-key file        | Versioned 256-bit master key mounted read-only at `/run/secrets/app_encryption_master_key`     | Used in memory to encrypt or decrypt `key_envelope.wrapped_kek`. Only `master_key_version` is stored in PostgreSQL.               |
 | Anti-abuse controls               | Guest, user, organization, and target identifiers                                              | Allow or deny outcome. Rate-limit and cooldown counters stay in the anti-abuse subsystem.                                         |
 | Report renderer and feed endpoint | Retained scan data, report metadata, feed configuration                                        | `report` metadata and `asset_feed` configuration. Rendered files and feed responses are generated on demand.                      |
 
@@ -50,9 +50,10 @@ Conventions:
 
 ### 2.1 Organizations and users
 
-| Used by                               | PostgreSQL type     | Values                         |
-|---------------------------------------|---------------------|--------------------------------|
-| `app_user`, `organization_invitation` | `organization_role` | `member`, `organization_admin` |
+| Used by                               | PostgreSQL type     | Values                            |
+|---------------------------------------|---------------------|-----------------------------------|
+| `app_user`, `organization_invitation` | `organization_role` | `member`, `organization_admin`    |
+| `key_envelope`                        | `key_scope`         | `organization`, `user`, `scan_job` |
 
 ### 2.2 Assets and verification
 
@@ -129,28 +130,37 @@ Namespaced text values, not database enums: `statement_key`, `required_context_t
 - Platform-administrator status comes from the identity provider and is independent of the organization role.
 - The identity provider stays the system of record for identity, credentials, authentication methods, sessions, and MFA enrollment.
 
-### 3.3 `user_key_envelope`
+### 3.3 `key_envelope`
 
-Mutable one-to-one table storing one random per-user KEK, encrypted by the deployment master key. Key wrapping is application-owned. PostgreSQL stores only the wrapped KEK and its master-key version; plaintext keys exist only in application memory.
+Mutable table storing one random KEK per key scope instance, encrypted by the deployment master key. Scopes follow data ownership (IDR-011, confirmed by IDR-017): one `organization` envelope per organization, one `user` envelope per user, one `scan_job` envelope per guest scan job. Key wrapping is application-owned. PostgreSQL stores only the wrapped KEK and its master-key version; plaintext keys exist only in application memory.
 
-| Column               | Type        | Constraints                                                         |
-|----------------------|-------------|---------------------------------------------------------------------|
-| `id`                 | UUID        | Primary key; opaque envelope identifier                             |
-| `organization_id`    | UUID        | Not null; foreign key to `organization.id`                          |
-| `user_id`            | UUID        | Not null; unique; foreign key to `app_user.id`; `ON DELETE CASCADE` |
-| `wrapped_kek`        | bytea       | Not null; user KEK encrypted by the deployment master key           |
-| `wrapping_nonce`     | bytea       | Not null                                                            |
-| `wrapping_algorithm` | text        | Not null                                                            |
-| `master_key_version` | text        | Not null                                                            |
-| `created_at`         | timestamptz | Not null                                                            |
-| `updated_at`         | timestamptz | Not null                                                            |
+Each scope KEK wraps the DEKs of the data it owns:
+
+- `user` — per-event and per-response DEKs of retained user evidence (`statement_response`, `audit_event`).
+- `organization` — DEKs for organization-owned encrypted values (`organization_webhook.endpoint_url_encrypted`, `organization_webhook.signing_secret_encrypted`).
+- `scan_job` — DEKs for guest scan data awaiting claim. A successful claim re-wraps those DEKs under the claiming owner's scope and deletes the `scan_job` envelope; an unclaimed guest job's purge deletes it.
+
+| Column               | Type        | Constraints                                                           |
+|----------------------|-------------|-----------------------------------------------------------------------|
+| `id`                 | UUID        | Primary key; opaque envelope identifier                               |
+| `scope`              | `key_scope` | Not null                                                              |
+| `organization_id`    | UUID        | Nullable; foreign key to `organization.id`; `ON DELETE CASCADE`       |
+| `user_id`            | UUID        | Nullable; unique; foreign key to `app_user.id`; `ON DELETE CASCADE`   |
+| `scan_job_id`        | UUID        | Nullable; unique; foreign key to `scan_job.id`; `ON DELETE CASCADE`   |
+| `wrapped_kek`        | bytea       | Not null; scope KEK encrypted by the deployment master key            |
+| `wrapping_nonce`     | bytea       | Not null                                                              |
+| `wrapping_algorithm` | text        | Not null                                                              |
+| `master_key_version` | text        | Not null                                                              |
+| `created_at`         | timestamptz | Not null                                                              |
+| `updated_at`         | timestamptz | Not null                                                              |
 
 Constraints:
 
+- The owner reference matches the scope: `scope = 'organization'` sets `organization_id` alone; `scope = 'user'` sets `user_id`, with `organization_id` equal to the linked AppUser organization; `scope = 'scan_job'` sets `scan_job_id` alone (guest jobs only — a claimed job's envelope is replaced by the re-wrap, never kept).
+- At most one envelope exists per organization, per user, and per scan job (partial unique index on `organization_id` where `scope = 'organization'`; `user_id` and `scan_job_id` are unique).
 - `id` is random and never reused. It must not encode an `app_user.id`, identity-provider subject, email address, or any other user identifier.
-- `organization_id` equals the linked AppUser organization.
 - Master-key rotation re-encrypts `wrapped_kek` and updates `master_key_version`. Retained audit and statement payloads are not re-encrypted.
-- Deleting this row makes all DEKs wrapped by its user KEK unrecoverable.
+- Deleting a row makes all DEKs wrapped by its scope KEK unrecoverable: user erasure deletes the `user` envelope, organization erasure deletes the `organization` envelope, and the unclaimed-guest purge deletes the `scan_job` envelope.
 
 Backup rules: the master-key backup is stored separately from PostgreSQL backups. Database backups containing deleted envelopes expire within 30 days. A restored backup must replay completed erasures before the service is exposed.
 
@@ -178,21 +188,24 @@ Rules:
 
 ### 3.5 User erasure treatment
 
-Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque `user_key_envelope.id` value, without a foreign key to the envelope or the user.
+Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque user-scope `key_envelope.id` value, without a foreign key to the envelope or the user.
 
 | Reference category                     | Examples                                                                                | Erasure behavior                                                                                                                                              |
 |----------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | User-owned operational data            | Notifications and user-owned API keys                                                   | Delete with the user.                                                                                                                                         |
 | Attribution on organization-owned data | Asset creator, scan trigger, verification requester, schedule creator, report generator | Keep the organization-owned row and set the user foreign key to null.                                                                                         |
-| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-specific KEK. Delete `user_key_envelope` during erasure. |
+| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-scope KEK. Delete the user-scope `key_envelope` during erasure. |
 
-Account erasure completes within 30 days. The workflow deletes `user_key_envelope`, deletes the `app_user` row and user-owned data, and nulls attribution references before the request is closed.
+Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, and nulls attribution references before the request is closed.
+
+Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
 
 ```mermaid
 erDiagram
+    ORGANIZATION ||--o| KEY_ENVELOPE: "owns (scope organization)"
     ORGANIZATION ||--o{ APP_USER: contains
-    ORGANIZATION ||--o{ USER_KEY_ENVELOPE: scopes
-    APP_USER ||--|| USER_KEY_ENVELOPE: has
+    APP_USER ||--o| KEY_ENVELOPE: "has (scope user)"
+    SCAN_JOB ||--o| KEY_ENVELOPE: "has while unclaimed (scope scan_job)"
     ORGANIZATION ||--o{ ORGANIZATION_INVITATION: issues
     APP_USER o|--o{ ORGANIZATION_INVITATION: invites
     APP_USER o|--o{ ORGANIZATION_INVITATION: accepts
@@ -318,17 +331,17 @@ Expected `statement_key` values:
 | `id`                          | UUID        | Primary key                                                                         |
 | `organization_id`             | UUID        | Nullable; foreign key to `organization.id`                                          |
 | `statement_id`                | UUID        | Not null; foreign key to `statement.id`                                             |
-| `envelope_id`                 | UUID        | Not null; copied from `user_key_envelope.id` at write time; no foreign key retained |
+| `envelope_id`                 | UUID        | Not null; copied from the user-scope `key_envelope.id` at write time; no foreign key retained |
 | `context_type`                | text        | Nullable; namespaced value                                                          |
 | `context_id`                  | UUID        | Nullable                                                                            |
 | `responded_at`                | timestamptz | Not null                                                                            |
 | `response_evidence_encrypted` | bytea       | Not null; encrypted actor identity, IP address, user agent, and response evidence   |
-| `wrapped_dek`                 | bytea       | Not null; per-response DEK wrapped by the user-specific KEK                         |
+| `wrapped_dek`                 | bytea       | Not null; per-response DEK wrapped by the user-scope KEK                            |
 | `encryption_metadata`         | JSONB       | Not null; payload-encryption and DEK-wrapping algorithm and nonce metadata          |
 
 Constraints:
 
-- `envelope_id` equals the responding user's `user_key_envelope.id` at write time. No foreign key is retained.
+- `envelope_id` equals the responding user's user-scope `key_envelope.id` at write time. No foreign key is retained.
 - `envelope_id` is opaque and never reused. It must not encode an `app_user.id`, identity-provider subject, email address, or any other user identifier.
 - `context_type` and `context_id` are either both null or both non-null.
 - When `statement.required_context_type` is null: both context columns are null, and the response is unique on (`statement_id`, `envelope_id`).
@@ -336,7 +349,7 @@ Constraints:
 - When `context_type = scan_job`: `context_id` identifies a ScanJob, `organization_id` equals the ScanJob organization, and the envelope belongs to the user who submitted the launch at response time.
 - StatementResponse rows are immutable. A correction requires a new Statement version and a new response. Application roles have no `UPDATE` or `DELETE` permission on this table.
 - Each StatementResponse is recorded in `audit_event`.
-- User erasure deletes the applicable `user_key_envelope` and the `app_user` row. The StatementResponse remains, but its actor evidence cannot be decrypted, and no user foreign key survives.
+- User erasure deletes the applicable user-scope `key_envelope` and the `app_user` row. The StatementResponse remains, but its actor evidence cannot be decrypted, and no user foreign key survives.
 - `statement.response_kind` identifies which action the user performed. `statement_key`, `version`, and `content_hash` identify the exact text.
 
 ```mermaid
@@ -678,8 +691,8 @@ Rules:
 |----------------------------|-------------|--------------------------------------------------------------|
 | `id`                       | UUID        | Primary key                                                  |
 | `organization_id`          | UUID        | Not null; unique; foreign key to `organization.id`           |
-| `endpoint_url_encrypted`   | bytea       | Not null                                                     |
-| `signing_secret_encrypted` | bytea       | Not null                                                     |
+| `endpoint_url_encrypted`   | bytea       | Not null; encrypted under a DEK wrapped by the organization-scope KEK (§3.3) |
+| `signing_secret_encrypted` | bytea       | Not null; encrypted under a DEK wrapped by the organization-scope KEK (§3.3) |
 | `created_by_user_id`       | UUID        | Nullable; foreign key to `app_user.id`; `ON DELETE SET NULL` |
 | `created_at`               | timestamptz | Not null                                                     |
 | `updated_at`               | timestamptz | Not null                                                     |
@@ -701,10 +714,10 @@ erDiagram
 User identity and other user PII are never stored as clear foreign keys in immutable audit rows:
 
 1. A per-event data-encryption key (DEK) encrypts the sensitive payload.
-2. The DEK is wrapped by the user-specific KEK, which is stored encrypted in `user_key_envelope`.
+2. The DEK is wrapped by the user-scope KEK, which is stored encrypted in `key_envelope`.
 3. The application unwraps that KEK using the deployment master key mounted at `/run/secrets/app_encryption_master_key`.
 
-For user-related events, `envelope_id` is copied from `user_key_envelope.id` at write time. It is not a foreign key and contains no user identifier. Deleting `user_key_envelope` removes both the usable user KEK and its link to the AppUser, without updating or deleting the audit event.
+For user-related events, `envelope_id` is copied from the user-scope `key_envelope.id` at write time. It is not a foreign key and contains no user identifier. Deleting the user-scope `key_envelope` removes both the usable user KEK and its link to the AppUser, without updating or deleting the audit event.
 
 ### 12.1 `audit_event`
 
@@ -719,8 +732,8 @@ For user-related events, `envelope_id` is copied from `user_key_envelope.id` at 
 | `subject_id`          | UUID        | Nullable; may reference a non-user model entity only                                   |
 | `detail`              | JSONB       | Nullable; structured operational detail containing no PII                              |
 | `payload_encrypted`   | bytea       | Nullable; encrypted identity, IP address, user agent, and other sensitive event detail |
-| `wrapped_dek`         | bytea       | Nullable; per-event DEK wrapped by the user-specific KEK                               |
-| `envelope_id`         | UUID        | Nullable; copied from `user_key_envelope.id` at write time; no foreign key retained    |
+| `wrapped_dek`         | bytea       | Nullable; per-event DEK wrapped by the user-scope KEK                                  |
+| `envelope_id`         | UUID        | Nullable; copied from the user-scope `key_envelope.id` at write time; no foreign key retained |
 | `encryption_metadata` | JSONB       | Nullable; payload-encryption and DEK-wrapping algorithm and nonce metadata             |
 | `occurred_at`         | timestamptz | Not null                                                                               |
 | `previous_hash`       | text        | Nullable                                                                               |
@@ -739,14 +752,14 @@ Constraints:
 - `detail` may contain non-PII operational values: status, counts, model identifiers. User identity, email, IP address, user agent, domains, and other PII belong in `payload_encrypted`, or are represented through a non-user `subject_id`.
 - An event may contain `detail`, an encrypted payload, or both.
 - `payload_encrypted`, `wrapped_dek`, `envelope_id`, and `encryption_metadata` are either all null or all non-null.
-- For a user-related event, `envelope_id` equals the user's `user_key_envelope.id` at write time, but no foreign key constrains it.
+- For a user-related event, `envelope_id` equals the user's user-scope `key_envelope.id` at write time, but no foreign key constrains it.
 - `envelope_id` is opaque and never reused. It must not encode an `app_user.id`, identity-provider subject, email address, or any other user identifier.
 - One encrypted user-specific payload contains PII for at most one user. An operation involving PII for two users emits separately encrypted audit events.
-- Deleting the applicable `user_key_envelope` makes the encrypted event detail inaccessible without deleting the audit row.
+- Deleting the applicable user-scope `key_envelope` makes the encrypted event detail inaccessible without deleting the audit row.
 - `entry_hash` covers `previous_hash` and the canonical stored representation of the event, including `detail`, `payload_encrypted`, `wrapped_dek`, `envelope_id`, and `encryption_metadata`.
 - `chain_id` and `sequence_number` define deterministic ordering within each organization or platform chain.
 
-The same user KEK wraps the per-response DEKs used by `statement_response`. Deleting `user_key_envelope` crypto-shreds retained response evidence and retained audit identity data in one erasure operation.
+The same user-scope KEK wraps the per-response DEKs used by `statement_response`. Deleting the user-scope `key_envelope` crypto-shreds retained response evidence and retained audit identity data in one erasure operation.
 
 ```mermaid
 erDiagram
@@ -767,7 +780,7 @@ erDiagram
 10. On terminal completion, `scan_job.purge_at` is set to `finished_at + 12 months + 30 days` by default. An unclaimed guest job's `purge_at` is instead `created_at + 24 hours`, set at creation, and a successful claim recomputes the timestamp under the default rule. Scan data is hard-deleted at `purge_at` regardless of job status, with unfinished work terminated first; the application sends notice 30 days beforehand, and that notice applies to a guest job only once it is claimed. Uploaded file bytes are purged after analysis or within 24 hours. Audit events are retained for 24 months.
 11. Report rows store generation and source-provenance metadata only. Rendered artifacts are generated from retained scan data. After the source is purged, the metadata may remain, but another report cannot be generated from that source.
 12. Finding regression comparison uses stable `check_id` values and, where required, normalized `affected_resource` values. A change to a `check_id` is a breaking result-schema change.
-13. Deleting an AppUser cascades `user_key_envelope`, notifications, and other user-owned operational data, sets organization-owned attribution references to null, and leaves no plain AppUser identifier in retained StatementResponse or AuditEvent rows.
+13. Deleting an AppUser cascades its user-scope `key_envelope`, notifications, and other user-owned operational data, sets organization-owned attribution references to null, and leaves no plain AppUser identifier in retained StatementResponse or AuditEvent rows. Deleting an Organization cascades its organization-scope `key_envelope`.
 14. Invitation acceptance requires a matching verified email and atomically assigns the invitation organization and role. An existing member of another organization cannot accept.
 15. `scan_task.id` is the queue task identifier. Durable cancellation intent is stored in `scan_task.cancellation_requested_at`. A canceled task cannot later produce an accepted successful result.
 
@@ -778,6 +791,9 @@ Every constraint below enforces an invariant already stated in the table section
 | Table                           | Constraint                                                                                                                         | Enforces                                                              |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
 | `organization_invitation`       | `accepted_by_user_id IS NULL OR accepted_at IS NOT NULL`                                                                           | an acceptance actor implies an acceptance time                        |
+| `key_envelope`                  | `(scope = 'user') = (user_id IS NOT NULL)`                                                                                         | the user reference exists exactly on user envelopes                   |
+| `key_envelope`                  | `(scope = 'scan_job') = (scan_job_id IS NOT NULL)`                                                                                 | the job reference exists exactly on guest-job envelopes               |
+| `key_envelope`                  | `(scope = 'scan_job') = (organization_id IS NULL)`                                                                                 | organization context exists on all but guest-job envelopes            |
 | `asset`                         | `parent_asset_id IS NULL OR origin = 'discovered'`                                                                                 | only discovery produces child assets                                  |
 | `domain_verification_challenge` | `failure_code IS NULL OR last_recheck_at IS NOT NULL`                                                                              | a failure code always follows a recorded check                        |
 | `file_upload`                   | `(purged_at IS NULL) = (storage_key IS NOT NULL)`                                                                                  | the storage reference exists exactly while the bytes do               |
@@ -813,6 +829,7 @@ Uniqueness rules that need a partial or expression index rather than a plain con
 
 - `organization_invitation`: `UNIQUE (organization_id, lower(email)) WHERE accepted_at IS NULL AND revoked_at IS NULL` — one live invitation per organization and normalized address. Expiry cannot sit in an index predicate, so replacing an expired invitation first sets `revoked_at` — the resend rule the API design already states.
 - `statement_response`: `UNIQUE (statement_id, envelope_id) WHERE context_type IS NULL` and `UNIQUE (statement_id, context_type, context_id) WHERE context_type IS NOT NULL` — the two response-uniqueness rules of §5.2.
+- `key_envelope`: `UNIQUE (organization_id) WHERE scope = 'organization'` — one organization envelope per organization (§3.3); `user_id` and `scan_job_id` carry plain unique constraints.
 
 Stated rules that stay outside `CHECK` reach, enforced by triggers or application logic: the verification target's `asset_type = domain` (§4.2, cross-table), grade presence per test (§8.1, catalog-owned), same-organization foreign keys (§13.1), and `source = manual` requiring a triggering user at creation (§7.1, temporal — erasure may null it later).
 
