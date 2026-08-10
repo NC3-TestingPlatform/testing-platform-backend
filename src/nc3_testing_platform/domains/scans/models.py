@@ -50,6 +50,11 @@ class FileUpload(Base):
             "purge_due_at <= uploaded_at + interval '24 hours'",
             name="purge_within_24_hours",
         ),
+        # §14: the purge deadline never precedes the upload.
+        sa.CheckConstraint(
+            "purge_due_at >= uploaded_at",
+            name="purge_not_before_upload",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -81,6 +86,12 @@ class ScanJob(Base):
         sa.CheckConstraint(
             "num_nonnulls(asset_id, target_domain, file_upload_id) = 1",
             name="one_launch_target",
+        ),
+        # `cardinality`, not `array_length`: the latter is null on an empty
+        # array, and a CHECK that evaluates to null passes.
+        sa.CheckConstraint(
+            "cardinality(modules) >= 1",
+            name="modules_not_empty",
         ),
         sa.CheckConstraint(
             "(source = 'schedule') = (schedule_id IS NOT NULL)",

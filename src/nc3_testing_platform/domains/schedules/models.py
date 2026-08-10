@@ -21,6 +21,15 @@ class Schedule(Base):
     """
 
     __tablename__ = "schedule"
+    __table_args__ = (
+        # §14: a schedule runs at least one module. `cardinality`, not
+        # `array_length`: the latter is null on an empty array, and a CHECK
+        # that evaluates to null passes.
+        sa.CheckConstraint(
+            "cardinality(modules) >= 1",
+            name="modules_not_empty",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(

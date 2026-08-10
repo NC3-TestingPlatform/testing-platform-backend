@@ -59,8 +59,11 @@ Autogenerate proposes; you decide. Before committing one:
   downgrade for the pattern). Value changes to an existing enum are not
   detected at all — write those by hand (`ALTER TYPE ... ADD VALUE`, or a
   rename-copy-drop for removals).
-- **CHECK constraint changes.** New or altered `CheckConstraint`s on an
-  existing table are not detected; add/drop them by hand.
+- **CHECK constraint expression changes.** Alembic (1.19+) detects added and
+  dropped named `CheckConstraint`s by name — the v4.0.2 revision was generated
+  this way — but a changed expression under an unchanged name is invisible to
+  the diff. Rewrite those by hand as a drop-and-create pair; the structural
+  tests (`EXPECTED_CHECKS`) are what actually pin the expressions.
 - **Renames** (above) — always drop-and-create unless rewritten.
 - **Row-level security, grants, triggers.** Deliberately outside the models;
   when they arrive (RLS is descoped to a later phase), they are hand-written
