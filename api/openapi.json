@@ -1427,16 +1427,6 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          },
           "404": {
             "description": "Not Found",
             "content": {
@@ -1463,6 +1453,22 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. When the operation requires current MFA assurance that the presented token does not carry, `type` is `https://testing.nc3.lu/problems/step-up-required` and the remedy is a fresh authentication with an MFA method.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                },
+                "example": {
+                  "type": "https://testing.nc3.lu/problems/step-up-required",
+                  "title": "Step-up authentication required",
+                  "status": 403,
+                  "detail": "This operation requires a recent multi-factor authentication event."
                 }
               }
             }
@@ -4230,8 +4236,8 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden",
+          "422": {
+            "description": "Unprocessable Content",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4240,12 +4246,18 @@
               }
             }
           },
-          "422": {
-            "description": "Unprocessable Content",
+          "403": {
+            "description": "Forbidden. When the operation requires current MFA assurance that the presented token does not carry, `type` is `https://testing.nc3.lu/problems/step-up-required` and the remedy is a fresh authentication with an MFA method.",
             "content": {
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
+                },
+                "example": {
+                  "type": "https://testing.nc3.lu/problems/step-up-required",
+                  "title": "Step-up authentication required",
+                  "status": 403,
+                  "detail": "This operation requires a recent multi-factor authentication event."
                 }
               }
             }
@@ -4309,16 +4321,6 @@
               }
             }
           },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            }
-          },
           "404": {
             "description": "Not Found",
             "content": {
@@ -4335,6 +4337,22 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. When the operation requires current MFA assurance that the presented token does not carry, `type` is `https://testing.nc3.lu/problems/step-up-required` and the remedy is a fresh authentication with an MFA method.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                },
+                "example": {
+                  "type": "https://testing.nc3.lu/problems/step-up-required",
+                  "title": "Step-up authentication required",
+                  "status": 403,
+                  "detail": "This operation requires a recent multi-factor authentication event."
                 }
               }
             }
@@ -4389,6 +4407,48 @@
       }
     },
     "/api/v1/statement-responses": {
+      "get": {
+        "tags": [
+          "statements"
+        ],
+        "summary": "List the caller's statement responses",
+        "description": "Receipts the caller has recorded, account-level and context-bound alike.\n\nThe readback behind the acceptance prompt: a statement in force whose current\nversion has no receipt here is one the caller has yet to answer.",
+        "operationId": "list_statement_responses_api_v1_statement_responses_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StatementResponseReceipt"
+                  },
+                  "type": "array",
+                  "title": "Response List Statement Responses Api V1 Statement Responses Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OpenIdConnect": []
+          },
+          {
+            "ApiKey": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "statements"
@@ -7964,6 +8024,16 @@
             "format": "uuid7",
             "title": "Statement Id"
           },
+          "statement_key": {
+            "type": "string",
+            "title": "Statement Key",
+            "description": "Statement identifier, restated so a receipt readback needs no join against retired statement versions."
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Exact version answered."
+          },
           "responded_at": {
             "type": "string",
             "format": "date-time",
@@ -7999,6 +8069,8 @@
         "required": [
           "id",
           "statement_id",
+          "statement_key",
+          "version",
           "responded_at"
         ],
         "title": "StatementResponseReceipt",

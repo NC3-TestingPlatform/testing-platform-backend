@@ -73,6 +73,13 @@ class StatementResponseReceipt(BaseSchema):
 
     id: ResourceId
     statement_id: ResourceId
+    statement_key: str = Field(
+        description=(
+            "Statement identifier, restated so a receipt readback needs no join "
+            "against retired statement versions."
+        ),
+    )
+    version: str = Field(description="Exact version answered.")
     responded_at: Timestamp
     context_type: str | None = Field(
         default=None, description="Null for an account-level response."

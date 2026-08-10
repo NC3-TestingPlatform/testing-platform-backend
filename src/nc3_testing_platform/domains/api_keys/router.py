@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Response, status
 
 from nc3_testing_platform.core.enums import ApiKeyScope
-from nc3_testing_platform.core.errors import problem_responses
+from nc3_testing_platform.core.errors import problem_responses, step_up_forbidden
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
@@ -72,7 +72,8 @@ async def list_api_keys(page: CursorPage) -> Page[ApiKey]:
     summary="Create an API key",
     responses={
         201: {"headers": NO_STORE_HEADERS},
-        **problem_responses(401, 403, 422),
+        **problem_responses(401, 422),
+        **step_up_forbidden(),
     },
     dependencies=[OidcRequired],
 )
@@ -92,7 +93,7 @@ async def create_api_key(body: ApiKeyCreate, response: Response) -> ApiKeyCreate
 @router.post(
     "/{key_id}/revoke",
     summary="Revoke an API key",
-    responses=problem_responses(401, 403, 404, 409),
+    responses={**problem_responses(401, 404, 409), **step_up_forbidden()},
     dependencies=[OidcRequired],
 )
 async def revoke_api_key(key_id: ResourceId, body: ApiKeyRevoke) -> ApiKey:

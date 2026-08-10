@@ -21,6 +21,17 @@ _STATEMENT_ID = UUID("019ee1a2-0011-7c22-8d33-4e55f6a77b88")
 _RECEIPT_ID = UUID("019ee1a2-1122-7d33-9e44-5f66a7b88c99")
 
 
+def _sample_receipt() -> StatementResponseReceipt:
+    """The caller's acceptance of the current Terms version."""
+    return StatementResponseReceipt(
+        id=_RECEIPT_ID,
+        statement_id=_STATEMENT_ID,
+        statement_key="terms_and_conditions",
+        version="2026-01-15",
+        responded_at=datetime(2026, 7, 31, 9, 0, tzinfo=UTC),
+    )
+
+
 @router.get(
     "/statements",
     summary="List active statements",
@@ -71,8 +82,19 @@ async def record_statement_response(
     to the launch it belongs to and travels in the launch payload, so recording one
     here would produce a receipt attached to nothing.
     """
-    return StatementResponseReceipt(
-        id=_RECEIPT_ID,
-        statement_id=_STATEMENT_ID,
-        responded_at=datetime(2026, 7, 31, 9, 0, tzinfo=UTC),
-    )
+    return _sample_receipt()
+
+
+@router.get(
+    "/statement-responses",
+    summary="List the caller's statement responses",
+    responses=problem_responses(401),
+    dependencies=[CredentialRequired],
+)
+async def list_statement_responses() -> list[StatementResponseReceipt]:
+    """Receipts the caller has recorded, account-level and context-bound alike.
+
+    The readback behind the acceptance prompt: a statement in force whose current
+    version has no receipt here is one the caller has yet to answer.
+    """
+    return [_sample_receipt()]
