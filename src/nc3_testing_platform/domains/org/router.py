@@ -14,7 +14,7 @@ from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.org.schemas import (
     Invitation,
     InvitationCreate,
@@ -62,7 +62,7 @@ def _sample_invitation() -> Invitation:
     "/members",
     summary="List members",
     responses=problem_responses(401, 403),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_members(page: CursorPage) -> Page[Member]:
     """Members of the caller's organization."""
@@ -73,7 +73,7 @@ async def list_members(page: CursorPage) -> Page[Member]:
     "/members/{user_id}",
     summary="Change a member's role",
     responses=problem_responses(401, 403, 404, 409, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def update_member_role(user_id: ResourceId, body: MemberRoleUpdate) -> Member:
     """Promote or demote a member.
@@ -87,7 +87,7 @@ async def update_member_role(user_id: ResourceId, body: MemberRoleUpdate) -> Mem
     "/members/{user_id}/disable",
     summary="Disable a member",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def disable_member(user_id: ResourceId) -> Member:
     """Revoke a member's access without removing them or their attribution.
@@ -102,7 +102,7 @@ async def disable_member(user_id: ResourceId) -> Member:
     "/members/{user_id}/enable",
     summary="Re-enable a member",
     responses=problem_responses(401, 403, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def enable_member(user_id: ResourceId) -> Member:
     """Restore access to a disabled member."""
@@ -113,7 +113,7 @@ async def enable_member(user_id: ResourceId) -> Member:
     "/invitations",
     summary="List invitations",
     responses=problem_responses(401, 403),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_invitations(page: CursorPage) -> Page[Invitation]:
     """Invitations issued by this organization, including spent and revoked ones."""
@@ -125,7 +125,7 @@ async def list_invitations(page: CursorPage) -> Page[Invitation]:
     status_code=status.HTTP_201_CREATED,
     summary="Invite someone to the organization",
     responses=problem_responses(401, 403, 409, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def create_invitation(body: InvitationCreate) -> Invitation:
     """Issue an invitation and email the link.
@@ -141,7 +141,7 @@ async def create_invitation(body: InvitationCreate) -> Invitation:
     "/invitations/{invitation_id}",
     summary="Revoke an invitation",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def revoke_invitation(invitation_id: ResourceId) -> Invitation:
     """Invalidate the outstanding link.
@@ -178,7 +178,7 @@ async def preview_invitation(token: str) -> InvitationPreview:
     status_code=status.HTTP_201_CREATED,
     summary="Accept an invitation",
     responses=problem_responses(401, 403, 404, 409, 410),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def accept_invitation(token: str) -> Member:
     """Join the organization.

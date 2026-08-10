@@ -7,8 +7,9 @@ sessions, MFA enrollment, and current assurance; this service only projects
 an `app_user` row from a verified subject. A caller therefore presents
 either an OIDC token or a platform API key.
 
-`auto_error` is off throughout, authentication gates are server-side and
-evaluated per operation.
+`auto_error` is off throughout.
+Dependencies in this module declare requirements into the published contract and enforce nothing.
+Credential verification and assurance evaluation are `NotImplementedError` seams, unwired while the application is a live mock.
 
 Developer note: A frontend may route calls through its own proxy backend ("BFF").
 That changes how the browser authenticates to the BFF (httpOnly session cookie),
@@ -19,7 +20,7 @@ OIDC bearer token or an API key.
 import os
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import APIKeyHeader, OpenIdConnect
 
 from nc3_testing_platform.core.errors import PROBLEM_MEDIA_TYPE, ProblemDetail
@@ -57,38 +58,55 @@ ApiKeyAuth = Annotated[str | None, Depends(api_key)]
 
 
 def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
-    """Reject a caller presenting neither credential.
+    """Declares that the operation requires one of the two credentials.
 
-    Belongs on the operation.
-    `POST /scans` accepts anonymous callers, and a guest reads their own scan
-    with a token instead of a credential.
+    The parameter list is the entire effect:
+    FastAPI reads the two credential dependencies and publishes both schemes into the operation's `security`.
+    Verification of a presented credential is :func:`verify_token` and :func:`verify_api_key`.
     """
-    if not (oidc_token or key):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Present an OpenID Connect token or a platform API key.",
-        )
 
 
-# Attach as `dependencies=[Authenticated]` on an operation.
-Authenticated = Depends(require_authentication)
+# Attach as `dependencies=[CredentialRequired]` on an operation.
+CredentialRequired = Depends(require_authentication)
 
 
 def require_oidc_token(oidc_token: OidcAuth) -> None:
-    """Rejects a caller without an OpenID Connect token.
+    """Declares that the operation accepts only the OpenID Connect scheme.
 
-    Belongs on an operation that consumes current MFA assurance.
-    Assurance is read from the identity provider's token, so a platform API key cannot satisfy the gate and the operation declares only the OIDC scheme.
+    Belongs on an operation that consumes current MFA assurance:
+    assurance is read from the identity provider's token, which a platform API key cannot carry.
+    Verification and assurance evaluation are :func:`verify_token` and :func:`require_current_mfa_assurance`.
     """
-    if not oidc_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Present an OpenID Connect token carrying current MFA assurance.",
-        )
 
 
-# Attach as `dependencies=[MfaGated]` on an operation.
-MfaGated = Depends(require_oidc_token)
+# Attach as `dependencies=[OidcRequired]` on an operation.
+OidcRequired = Depends(require_oidc_token)
+
+
+def verify_token(token: str) -> dict[str, object]:
+    """The verified claims of an OpenID Connect token.
+
+    Verification covers the signature against the identity provider's published keys, the issuer, the audience, and the expiry.
+    A failure answers `401` with a `WWW-Authenticate: Bearer` challenge.
+    """
+    raise NotImplementedError
+
+
+def verify_api_key(key: str) -> None:
+    """Validates a platform API key against its stored hash.
+
+    A failure answers `401`.
+    """
+    raise NotImplementedError
+
+
+def require_current_mfa_assurance(claims: dict[str, object]) -> None:
+    """Rejects claims whose authentication event lacks current MFA assurance.
+
+    Assurance is `amr` carrying an MFA method within the configured `max_age`.
+    A failure answers `401` with the RFC 9470 `insufficient_user_authentication` challenge.
+    """
+    raise NotImplementedError
 
 
 def read_optional_credentials(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:

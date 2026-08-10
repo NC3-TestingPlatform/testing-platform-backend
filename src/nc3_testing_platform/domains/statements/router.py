@@ -7,7 +7,7 @@ from fastapi import APIRouter, status
 
 from nc3_testing_platform.core.enums import StatementResponseKind
 from nc3_testing_platform.core.errors import problem_responses
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.statements.schemas import (
     Statement,
     StatementResponseReceipt,
@@ -60,7 +60,7 @@ async def list_statements() -> list[Statement]:
     status_code=status.HTTP_201_CREATED,
     summary="Record an account-level response",
     responses=problem_responses(401, 404, 409, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def record_statement_response(
     body: StatementResponseSubmission,

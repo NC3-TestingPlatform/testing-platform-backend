@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.admin.schemas import AuditEvent
 from nc3_testing_platform.domains.scans.examples import ASSET_ID, ORGANIZATION_ID
 
@@ -29,7 +29,7 @@ _EVENT_ID = UUID("019ee1a9-0011-7a22-8b33-4c44d5e66f77")
     "/audit-events",
     summary="Read the audit log",
     responses=problem_responses(401, 403),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_audit_events(
     page: CursorPage,

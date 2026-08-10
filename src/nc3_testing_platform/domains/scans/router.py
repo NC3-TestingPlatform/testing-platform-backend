@@ -22,7 +22,7 @@ from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     ANONYMOUS_ALTERNATIVE,
-    Authenticated,
+    CredentialRequired,
     OptionallyAuthenticated,
     rate_limited,
 )
@@ -156,7 +156,7 @@ async def launch_scan(launch: ScanLaunchBody) -> ScanJobAccepted:
     "",
     summary="List scans",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_scans(page: CursorPage) -> Page[ScanJob]:
     """Scans in the caller's organization, newest first.
@@ -258,7 +258,7 @@ def _sample_events() -> list[tuple[str, BaseModel]]:
     "/{scan_id}/cancel",
     summary="Cancel a running scan",
     responses=problem_responses(401, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def cancel_scan(scan_id: ResourceId) -> ScanJob:
     """Record durable cancellation intent.
@@ -275,7 +275,7 @@ async def cancel_scan(scan_id: ResourceId) -> ScanJob:
     "/{scan_id}/claim",
     summary="Claim a guest scan",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def claim_scan(scan_id: ResourceId, body: ScanClaimRequest) -> ScanJob:
     """Attach a guest scan to the authenticated caller's organization.
@@ -297,7 +297,7 @@ async def claim_scan(scan_id: ResourceId, body: ScanClaimRequest) -> ScanJob:
     "/{scan_id}/retention/extend",
     summary="Extend the retention deadline",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def extend_retention(scan_id: ResourceId) -> ScanJob:
     """Move `purge_at` further out and record an audit event.
@@ -313,7 +313,7 @@ async def extend_retention(scan_id: ResourceId) -> ScanJob:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Hard-delete a scan",
     responses=problem_responses(401, 403, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def delete_scan(scan_id: ResourceId) -> Response:
     """Delete the scan and its data immediately.

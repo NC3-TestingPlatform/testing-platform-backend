@@ -178,6 +178,7 @@ Rules:
 - Verification statuses are `pending`, `verified`, and `expired`. The status is computed from `verified_scope` and `challenge`, so no request has to reconcile the three of them.
 - `POST .../verification` requires current MFA assurance.
 - Current MFA assurance is read from the identity provider's session or token. An operation that requires it therefore declares only the OpenID Connect scheme: a platform API key carries no assurance.
+- Assurance is the `amr` claim carrying an MFA method, current while the authentication event is within the configured `max_age`. The platform reads `amr` rather than `acr`: `amr` values are an IANA-registered vocabulary (RFC 8176), while `acr` values are defined per identity provider, and the platform assumes no provider-specific vocabulary.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
 ### 5.2 Feeds

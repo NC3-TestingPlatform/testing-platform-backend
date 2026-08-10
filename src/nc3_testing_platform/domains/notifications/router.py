@@ -10,7 +10,7 @@ from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.notifications.schemas import (
     Account,
     AccountUpdate,
@@ -45,7 +45,7 @@ def _sample_notification() -> Notification:
     "",
     summary="List notifications",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_notifications(page: CursorPage) -> Page[Notification]:
     """The caller's inbox, newest first."""
@@ -57,7 +57,7 @@ async def list_notifications(page: CursorPage) -> Page[Notification]:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Mark all as read",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def mark_all_read() -> Response:
     """Mark every unread notification belonging to the caller.
@@ -72,7 +72,7 @@ async def mark_all_read() -> Response:
     "/{notification_id}/read",
     summary="Mark one as read",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def mark_read(notification_id: ResourceId) -> Notification:
     """Set `read_at` on one of the caller's notifications."""
@@ -85,7 +85,7 @@ async def mark_read(notification_id: ResourceId) -> Notification:
     "/webhook",
     summary="Get the organization webhook",
     responses=problem_responses(401, 403, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_webhook() -> OrganizationWebhook:
     """The organization's SIEM endpoint. `404` when none is configured."""
@@ -96,7 +96,7 @@ async def get_webhook() -> OrganizationWebhook:
     "/webhook",
     summary="Create or replace the organization webhook",
     responses=problem_responses(401, 403, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def upsert_webhook(body: OrganizationWebhookUpsert) -> OrganizationWebhook:
     """Set the single webhook configuration for the organization."""
@@ -108,7 +108,7 @@ async def upsert_webhook(body: OrganizationWebhookUpsert) -> OrganizationWebhook
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Disable the organization webhook",
     responses=problem_responses(401, 403, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def delete_webhook() -> Response:
     """Delete the configuration, which disables the integration.
@@ -135,7 +135,7 @@ def _sample_webhook() -> OrganizationWebhook:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Dismiss a notification",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def dismiss_notification(notification_id: ResourceId) -> Response:
     """Permanently remove the caller's row.
@@ -150,7 +150,7 @@ async def dismiss_notification(notification_id: ResourceId) -> Response:
     "",
     summary="Get the current account",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_account() -> Account:
     """The caller's `app_user` projection: identity, organization, role, preference."""
@@ -168,7 +168,7 @@ async def get_account() -> Account:
     "",
     summary="Update account preferences",
     responses=problem_responses(401, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def update_account(body: AccountUpdate) -> Account:
     """Change the email-notification opt-in.

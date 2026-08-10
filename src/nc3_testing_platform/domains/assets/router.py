@@ -11,7 +11,7 @@ from nc3_testing_platform.core.enums import VerificationStatus
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated, MfaGated
+from nc3_testing_platform.core.security import CredentialRequired, OidcRequired
 from nc3_testing_platform.domains.assets import examples
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
@@ -41,7 +41,7 @@ public_feed_router = APIRouter(prefix="/feeds", tags=["assets"])
     "",
     summary="List assets",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_assets(page: CursorPage) -> Page[Asset]:
     """Assets owned by the caller's organization."""
@@ -56,7 +56,7 @@ async def list_assets(page: CursorPage) -> Page[Asset]:
     status_code=status.HTTP_201_CREATED,
     summary="Register a domain",
     responses=problem_responses(401, 409, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def create_asset(body: AssetCreate) -> Asset:
     """Register a domain to monitor.
@@ -70,7 +70,7 @@ async def create_asset(body: AssetCreate) -> Asset:
     "/{asset_id}",
     summary="Get an asset",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_asset(asset_id: ResourceId) -> Asset:
     """One asset. Verification state is a separate nested resource."""
@@ -81,7 +81,7 @@ async def get_asset(asset_id: ResourceId) -> Asset:
     "/{asset_id}",
     summary="Update an asset",
     responses=problem_responses(401, 404, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def update_asset(asset_id: ResourceId, body: AssetUpdate) -> Asset:
     """Change regression alerting. Nothing else about an asset is mutable."""
@@ -93,7 +93,7 @@ async def update_asset(asset_id: ResourceId, body: AssetUpdate) -> Asset:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an asset",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def delete_asset(asset_id: ResourceId) -> Response:
     """Remove an asset from the inventory.
@@ -107,7 +107,7 @@ async def delete_asset(asset_id: ResourceId) -> Response:
     "/{asset_id}/scans",
     summary="List scans for an asset",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_asset_scans(asset_id: ResourceId, page: CursorPage) -> Page[ScanJob]:
     """This asset's scan history, newest first."""
@@ -118,7 +118,7 @@ async def list_asset_scans(asset_id: ResourceId, page: CursorPage) -> Page[ScanJ
     "/{asset_id}/verification",
     summary="Get verification state",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_verification(asset_id: ResourceId) -> DomainVerification:
     """Current ownership-verification state. `404` when none was ever started."""
@@ -130,7 +130,7 @@ async def get_verification(asset_id: ResourceId) -> DomainVerification:
     status_code=status.HTTP_201_CREATED,
     summary="Start a verification challenge",
     responses=problem_responses(401, 403, 404, 409, 422),
-    dependencies=[MfaGated],
+    dependencies=[OidcRequired],
 )
 async def create_verification(
     asset_id: ResourceId, body: VerificationCreate
@@ -151,7 +151,7 @@ async def create_verification(
     "/{asset_id}/verification/checks",
     summary="Check the DNS record now",
     responses=problem_responses(401, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def check_verification(asset_id: ResourceId) -> DomainVerification:
     """Resolve the challenge record and update the state.
@@ -171,7 +171,7 @@ async def check_verification(asset_id: ResourceId) -> DomainVerification:
     "/{asset_id}/verification/token",
     summary="Replace the verification token",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def regenerate_verification_token(asset_id: ResourceId) -> DomainVerification:
     """Issue a fresh token and expiry for a stalled challenge.
@@ -192,7 +192,7 @@ async def regenerate_verification_token(asset_id: ResourceId) -> DomainVerificat
     "/{asset_id}/feeds",
     summary="List feeds for an asset",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_asset_feeds(asset_id: ResourceId) -> list[AssetFeed]:
     """Feeds configured for this asset, including revoked ones."""
@@ -204,7 +204,7 @@ async def list_asset_feeds(asset_id: ResourceId) -> list[AssetFeed]:
     status_code=status.HTTP_201_CREATED,
     summary="Create a feed",
     responses=problem_responses(401, 404, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def create_asset_feed(
     asset_id: ResourceId, body: AssetFeedCreate
@@ -221,7 +221,7 @@ async def create_asset_feed(
     "/{asset_id}/feeds/{feed_id}/revoke",
     summary="Revoke a feed",
     responses=problem_responses(401, 404, 409),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def revoke_asset_feed(asset_id: ResourceId, feed_id: ResourceId) -> AssetFeed:
     """Stop serving a feed while keeping its row.

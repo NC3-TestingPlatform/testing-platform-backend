@@ -9,7 +9,7 @@ from nc3_testing_platform.core.enums import ScanModule
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.scans.examples import (
     ASSET_ID,
     ORGANIZATION_ID,
@@ -48,7 +48,7 @@ def _sample_schedule() -> Schedule:
     "",
     summary="List schedules",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_schedules(page: CursorPage) -> Page[Schedule]:
     """Schedules owned by the caller's organization."""
@@ -60,7 +60,7 @@ async def list_schedules(page: CursorPage) -> Page[Schedule]:
     status_code=status.HTTP_201_CREATED,
     summary="Create a schedule",
     responses=problem_responses(401, 403, 404, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def create_schedule(body: ScheduleCreate) -> Schedule:
     """Create a recurring scan against a currently eligible asset."""
@@ -71,7 +71,7 @@ async def create_schedule(body: ScheduleCreate) -> Schedule:
     "/{schedule_id}",
     summary="Get a schedule",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_schedule(schedule_id: ResourceId) -> Schedule:
     """One schedule, including its next fire time."""
@@ -82,7 +82,7 @@ async def get_schedule(schedule_id: ResourceId) -> Schedule:
     "/{schedule_id}",
     summary="Update a schedule",
     responses=problem_responses(401, 404, 422),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def update_schedule(schedule_id: ResourceId, body: ScheduleUpdate) -> Schedule:
     """Change recurrence, modules, or enablement."""
@@ -94,7 +94,7 @@ async def update_schedule(schedule_id: ResourceId, body: ScheduleUpdate) -> Sche
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a schedule",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def delete_schedule(schedule_id: ResourceId) -> Response:
     """Remove a schedule. Scans it already produced are unaffected."""

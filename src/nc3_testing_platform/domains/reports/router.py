@@ -13,7 +13,7 @@ from nc3_testing_platform.core.enums import (
 )
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.reports.schemas import Report, ReportRequest
 from nc3_testing_platform.domains.scans.examples import JOB_ID, ORGANIZATION_ID, USER_ID
 
@@ -84,7 +84,7 @@ def _sample_report() -> Report:
         },
         **problem_responses(401, 404, 409, 422),
     },
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def generate_report(body: ReportRequest) -> Response:
     """Render a report synchronously from one retained scan source.
@@ -107,7 +107,7 @@ async def generate_report(body: ReportRequest) -> Response:
     "",
     summary="List generated reports",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_reports(page: CursorPage) -> Page[Report]:
     """Provenance metadata for reports this organization has generated.

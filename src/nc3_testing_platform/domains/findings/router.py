@@ -16,7 +16,7 @@ from nc3_testing_platform.core.enums import FindingSeverity, FindingStatus
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
-from nc3_testing_platform.core.security import Authenticated
+from nc3_testing_platform.core.security import CredentialRequired
 from nc3_testing_platform.domains.scans import examples
 from nc3_testing_platform.domains.scans.schemas import Finding
 
@@ -30,7 +30,7 @@ router = APIRouter(
     "",
     summary="List findings",
     responses=problem_responses(401),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def list_findings(
     page: CursorPage,
@@ -58,7 +58,7 @@ async def list_findings(
     "/{finding_id}",
     summary="Get a finding",
     responses=problem_responses(401, 404),
-    dependencies=[Authenticated],
+    dependencies=[CredentialRequired],
 )
 async def get_finding(finding_id: ResourceId) -> Finding:
     """One finding in full, including its evidence."""
