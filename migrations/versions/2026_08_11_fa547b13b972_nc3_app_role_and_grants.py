@@ -25,17 +25,25 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Apply this revision."""
+    # The attributes are PostgreSQL's defaults, spelled out so the privilege
+    # boundary is verifiable in this diff — NOBYPASSRLS in particular is what
+    # the B5 policies will rely on.
     op.execute(
         """
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'nc3_app') THEN
-                CREATE ROLE nc3_app LOGIN;
+                CREATE ROLE nc3_app LOGIN
+                    NOSUPERUSER NOCREATEDB NOCREATEROLE
+                    NOBYPASSRLS NOREPLICATION;
             END IF;
         END
         $$;
         """
     )
+    # PUBLIC already has USAGE on the public schema (PostgreSQL default, kept
+    # in PG 15+); granted explicitly so hardening PUBLIC away later cannot
+    # silently cut the application off.
     op.execute("GRANT USAGE ON SCHEMA public TO nc3_app")
     op.execute(
         "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
@@ -54,6 +62,20 @@ def downgrade() -> None:
     """Revert this revision."""
     op.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM nc3_app")
     op.execute("REVOKE USAGE ON SCHEMA public FROM nc3_app")
-    # Fails if another database in the cluster still holds grants to the role;
-    # that database must downgrade first. Single-database dev/CI is unaffected.
-    op.execute("DROP ROLE IF EXISTS nc3_app")
+    # The role is cluster-level: dropping it fails while another database in
+    # the cluster still holds grants to it. Surface that as an actionable
+    # message instead of a bare dependency error. Single-database dev/CI is
+    # unaffected.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            DROP ROLE IF EXISTS nc3_app;
+        EXCEPTION WHEN dependent_objects_still_exist THEN
+            RAISE EXCEPTION 'nc3_app still holds grants in another database '
+                'of this cluster; downgrade that database first '
+                '(docs/database-roles.md)';
+        END
+        $$;
+        """
+    )

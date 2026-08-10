@@ -45,6 +45,11 @@ Autogenerate proposes; you decide. Before committing one:
    `op.alter_column(..., new_column_name=...)` / `op.rename_table(...)`.
 4. Constraint and index names must come from the naming convention in
    `core/db.py` — if a name looks hand-invented, it will never diff cleanly again.
+5. Adding a CHECK or foreign key to a **populated** table takes an
+   `ACCESS EXCLUSIVE` lock for a full-table validation scan. Fine while the
+   wipe rules below apply (every environment is rebuildable, tables are
+   empty); after the first release, add such constraints as
+   `NOT VALID` and run `VALIDATE CONSTRAINT` in a separate statement.
 
 ## What autogenerate misses
 
