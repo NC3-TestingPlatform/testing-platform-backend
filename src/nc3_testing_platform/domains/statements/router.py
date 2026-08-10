@@ -24,7 +24,6 @@ _RECEIPT_ID = UUID("019ee1a2-1122-7d33-9e44-5f66a7b88c99")
 @router.get(
     "/statements",
     summary="List active statements",
-    responses=problem_responses(500),
 )
 async def list_statements() -> list[Statement]:
     """Statements currently in force.
