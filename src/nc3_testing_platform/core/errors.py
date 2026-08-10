@@ -108,6 +108,26 @@ async def _validation_exception_handler(
     )
 
 
+async def _not_implemented_handler(
+    request: Request, exc: NotImplementedError
+) -> ProblemResponse:
+    """Answers `501` for a seam that is reachable but not yet implemented.
+
+    Functions belonging to a later development phase raise `NotImplementedError` at their seam.
+    A call that reaches one is a known, deliberate gap, answered as `501 Not Implemented` rather than as a `500` fault.
+    """
+    problem = ProblemDetail(
+        title=HTTPStatus.NOT_IMPLEMENTED.phrase,
+        status=HTTPStatus.NOT_IMPLEMENTED,
+        detail="This behavior is not implemented.",
+        instance=str(request.url),
+    )
+    return ProblemResponse(
+        status_code=HTTPStatus.NOT_IMPLEMENTED,
+        content=problem.model_dump(mode="json", exclude_none=True),
+    )
+
+
 async def _unhandled_exception_handler(
     request: Request, exc: Exception
 ) -> ProblemResponse:
@@ -128,6 +148,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # `exc` annotations are narrower (more precise), which trips pyright's contravariance check.
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)  # pyright: ignore[reportArgumentType]
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)  # pyright: ignore[reportArgumentType]
+    app.add_exception_handler(NotImplementedError, _not_implemented_handler)  # pyright: ignore[reportArgumentType]
     # Starlette re-raises after this handler responds, so the traceback still reaches the server log.
     app.add_exception_handler(Exception, _unhandled_exception_handler)
 
