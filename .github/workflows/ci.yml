@@ -40,6 +40,50 @@ jobs:
       - name: Test
         run: uv run --locked pytest
 
+  migrations:
+    name: Migration round trip
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Digest-pinned so the migration gate is reproducible; matches the tag
+        # the compose stack runs.
+        image: postgres:18.4-trixie@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build the schema from empty
+        run: uv run --locked alembic upgrade head
+
+      - name: Fail when models and head disagree
+        run: uv run --locked alembic check
+
+      - name: Round trip back to empty and up again
+        run: |
+          uv run --locked alembic downgrade base
+          uv run --locked alembic upgrade head
+
   # Taiga #160: the stack must come up from a clean checkout, gated on the
   # containers' own healthchecks (--wait fails the step if any goes unhealthy),
   # and prove one job round-trips broker -> workers -> PostgreSQL.

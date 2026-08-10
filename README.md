@@ -9,13 +9,10 @@ Project repository for the NC3 Testing Platform backend (v4).
 - Python 3.13, [uv](https://docs.astral.sh/uv/) (packaging + virtualenv)
 - FastAPI + Pydantic — the app and its request/response models
 - Celery + RabbitMQ (broker) + Redis (result backend) — the task queues, one per egress profile
-- PostgreSQL + psycopg — persistence (mock artifact only, until the ORM lands)
+- SQLAlchemy 2.0 + Alembic + PostgreSQL — the data model and its migration workflow (see [docs/database-migrations.md](docs/database-migrations.md))
 - Docker Compose — the local stack and the Dokploy deployment
 - pytest + openapi-spec-validator (dev) — the contract test suite
 
-**Projected** — planned:
-
-- SQLAlchemy 2.0 + Alembic — persistence + migrations
 
 # Getting started
 
