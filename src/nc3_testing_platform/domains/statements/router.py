@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from nc3_testing_platform.core.enums import StatementResponseKind
 from nc3_testing_platform.core.errors import problem_responses
@@ -19,6 +19,10 @@ router = APIRouter(tags=["statements"])
 _T0 = datetime(2026, 1, 15, tzinfo=UTC)
 _STATEMENT_ID = UUID("019ee1a2-0011-7c22-8d33-4e55f6a77b88")
 _RECEIPT_ID = UUID("019ee1a2-1122-7d33-9e44-5f66a7b88c99")
+
+# The v4.0 statement keys whose statement carries a non-null
+# required_context_type — code-owned, like the catalog itself (data model §5.1).
+_CONTEXT_BOUND_KEYS = frozenset({"scan_target_permission", "intrusive_scan_risk_liability"})
 
 
 def _sample_receipt() -> StatementResponseReceipt:
@@ -82,6 +86,14 @@ async def record_statement_response(
     to the launch it belongs to and travels in the launch payload, so recording one
     here would produce a receipt attached to nothing.
     """
+    if body.statement_key in _CONTEXT_BOUND_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This statement requires a scan_job context; a per-launch "
+                "declaration travels in the launch payload."
+            ),
+        )
     return StatementResponseReceipt(
         id=_RECEIPT_ID,
         statement_id=_STATEMENT_ID,

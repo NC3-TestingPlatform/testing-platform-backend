@@ -106,7 +106,7 @@ def require_current_mfa_assurance(claims: dict[str, object]) -> None:
     Assurance is `amr` carrying an MFA method within the configured `max_age`.
     A failure answers `403` with problem `type` :data:`~nc3_testing_platform.core.errors.STEP_UP_PROBLEM_TYPE`:
     the caller is authenticated but under-assured, and the type distinguishes the remedy — a fresh authentication with an MFA method — from a plain forbidden, which no retry fixes.
-    RFC 9470's `WWW-Authenticate` challenge is deliberately not used: its parameters are `acr`-based, and §5.1 reads `amr` because `acr` vocabularies are provider-defined.
+    RFC 9470's `WWW-Authenticate` challenge is deliberately not used: its parameters are `acr`-based, while the API design's §5.1 reads the `amr` claim (RFC 8176's registered vocabulary) precisely because `acr` values are provider-defined.
     """
     raise NotImplementedError
 
