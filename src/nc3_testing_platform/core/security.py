@@ -109,6 +109,30 @@ def require_current_mfa_assurance(claims: dict[str, object]) -> None:
     raise NotImplementedError
 
 
+def verify_claim_token(token: str) -> None:
+    """Validates a guest scan's claim token against the job's stored hash.
+
+    A failure answers `404`, so an unclaimed scan is indistinguishable from an absent one.
+    """
+    raise NotImplementedError
+
+
+def verify_feed_token(token: str) -> None:
+    """Validates a feed token against its stored hash.
+
+    An unknown token answers `404`; a revoked feed answers `410`.
+    """
+    raise NotImplementedError
+
+
+def require_platform_admin(claims: dict[str, object]) -> None:
+    """Rejects claims that do not carry the identity provider's platform-administrator claim.
+
+    A failure answers `403`.
+    """
+    raise NotImplementedError
+
+
 def read_optional_credentials(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
     """Declares both credentials without requiring either.
 
