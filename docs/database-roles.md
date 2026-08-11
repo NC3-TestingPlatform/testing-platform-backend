@@ -28,9 +28,15 @@ writing migration state.
 
 The role and its grants are created by a hand-written Alembic revision
 (`nc3_app role and grants`). Roles are cluster-level, so the revision creates
-it idempotently (`DO $$ ... IF NOT EXISTS`) — a second database migrated in
-the same cluster reuses the existing role, and re-running the revision after a
-partial downgrade cannot collide.
+it idempotently — `CREATE ROLE` with the `duplicate_object` error trapped, so
+even two databases of one cluster upgrading concurrently cannot collide — and
+then re-asserts the role's attributes, so a pre-existing `nc3_app` cannot
+carry `BYPASSRLS` (or any other attribute) past the revision. It refuses to
+proceed while `nc3_app` holds any role membership: inherited privileges would
+bypass the grant matrix, and revoking cluster-level memberships some other
+database may rely on is the operator's call, not the migration's. A second
+database migrated in the same cluster reuses the existing role, and re-running
+the revision after a partial downgrade cannot collide.
 
 **No password appears in any migration.** The revision creates the role with
 `LOGIN` but no credential; each environment sets its own:

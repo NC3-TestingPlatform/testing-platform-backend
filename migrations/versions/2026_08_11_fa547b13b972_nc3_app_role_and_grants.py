@@ -27,16 +27,18 @@ def upgrade() -> None:
     """Apply this revision."""
     # The attributes are PostgreSQL's defaults, spelled out so the privilege
     # boundary is verifiable in this diff — NOBYPASSRLS in particular is what
-    # the B5 policies will rely on.
+    # the B5 policies will rely on. Trapping duplicate_object (rather than
+    # checking pg_roles first) closes the check-then-create race when two
+    # databases of one cluster upgrade concurrently.
     op.execute(
         """
         DO $$
         BEGIN
-            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'nc3_app') THEN
-                CREATE ROLE nc3_app LOGIN
-                    NOSUPERUSER NOCREATEDB NOCREATEROLE
-                    NOBYPASSRLS NOREPLICATION;
-            END IF;
+            CREATE ROLE nc3_app LOGIN
+                NOSUPERUSER NOCREATEDB NOCREATEROLE
+                NOBYPASSRLS NOREPLICATION;
+        EXCEPTION WHEN duplicate_object THEN
+            NULL;  -- created by another database's upgrade or a prior run
         END
         $$;
         """
@@ -50,6 +52,33 @@ def upgrade() -> None:
     op.execute(
         "ALTER ROLE nc3_app LOGIN "
         "NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION"
+    )
+    # Attributes are not the whole story: a membership would hand nc3_app the
+    # granting role's privileges (inherited, or one SET ROLE away), bypassing
+    # the grant matrix below. Refuse loudly rather than revoke silently — the
+    # membership is cluster-level state some other database may rely on, and
+    # deciding for the operator is not this revision's call. With zero
+    # memberships, the direct grants below fully determine what nc3_app can do.
+    op.execute(
+        """
+        DO $$
+        DECLARE
+            memberships text;
+        BEGIN
+            SELECT string_agg(r.rolname, ', ')
+            INTO memberships
+            FROM pg_auth_members m
+            JOIN pg_roles r ON r.oid = m.roleid
+            WHERE m.member = 'nc3_app'::regrole;
+            IF memberships IS NOT NULL THEN
+                RAISE EXCEPTION 'nc3_app is a member of: % — inherited '
+                    'privileges would bypass this revision''s grant matrix; '
+                    'revoke those memberships first (docs/database-roles.md)',
+                    memberships;
+            END IF;
+        END
+        $$;
+        """
     )
     # PUBLIC already has USAGE on the public schema (PostgreSQL default, kept
     # in PG 15+); granted explicitly so hardening PUBLIC away later cannot
