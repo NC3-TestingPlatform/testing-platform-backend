@@ -41,6 +41,16 @@ def upgrade() -> None:
         $$;
         """
     )
+    # CREATE ROLE never touches an existing role, and the role is
+    # cluster-level: a second database migrated in the same cluster reuses
+    # whatever nc3_app already is. Re-assert the attributes so a pre-existing
+    # role cannot carry BYPASSRLS (or any other privilege) past this revision.
+    # The migration runs as the owning role — a superuser, which may change
+    # BYPASSRLS; CREATEROLE alone could not.
+    op.execute(
+        "ALTER ROLE nc3_app LOGIN "
+        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION"
+    )
     # PUBLIC already has USAGE on the public schema (PostgreSQL default, kept
     # in PG 15+); granted explicitly so hardening PUBLIC away later cannot
     # silently cut the application off.

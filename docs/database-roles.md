@@ -13,7 +13,7 @@ operational surgery stay possible.
 | Role | Who connects as it | Privileges |
 |---|---|---|
 | owning role (`postgres` in dev) | Alembic (`make db-*`), operators | Superuser/owner: DDL, grants, everything. Will bypass RLS (owner, `FORCE` off). |
-| `nc3_app` | API service, Celery workers | `SELECT`/`INSERT`/`UPDATE`/`DELETE` on application tables — minus the exceptions below. No DDL, no role management, no `alembic_version`. |
+| `nc3_app` | API service, Celery workers — **planned**: both still connect as the owning role via `DATABASE_URL` until the B5 session-layer cutover (see below) | `SELECT`/`INSERT`/`UPDATE`/`DELETE` on application tables — minus the exceptions below. No DDL, no role management, no `alembic_version`. |
 
 Exceptions to the blanket data grant, from the data model's append-only rules
 (§5.2, §12.1): `nc3_app` has **no `UPDATE` or `DELETE` on `statement_response`
@@ -36,7 +36,8 @@ partial downgrade cannot collide.
 `LOGIN` but no credential; each environment sets its own:
 
 - **Development**: `NC3_APP_DB_PASSWORD` in `.env` (see `.env.example`), applied
-  once per database:
+  once per PostgreSQL cluster — the role and its password are cluster-level
+  state, shared by every database in it:
 
   ```bash
   docker compose exec postgres psql -U postgres -d nc3_testing_platform \
