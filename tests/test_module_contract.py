@@ -142,31 +142,37 @@ def test_scan_input_accepts_each_target_kind() -> None:
     assert contract.ScanInput(file_path="/uploads/sample.bin").file_path
 
 
-def test_scan_input_options_are_frozen() -> None:
-    """`options` is copied and read-only, so no module corrupts another's config."""
-    source = {"budget": 5.0}
+def test_scan_input_options_are_isolated_from_the_caller() -> None:
+    """`options` is a deep snapshot: one module cannot corrupt another's config.
+
+    The stored payload stays plain JSON data (it maps onto JSONB), so the
+    guarantee is isolation from the caller's structure — nested included —
+    not attribute read-onlyness.
+    """
+    source = {"budget": 5.0, "nested": {"k": [1]}}
     scan_input = contract.ScanInput(target_domain="a.example", options=source)
-    source["budget"] = 999.0  # mutating the caller's dict must not leak in
+    source["budget"] = 999.0
+    source["nested"]["k"].append(2)  # type: ignore[index]
     assert scan_input.options["budget"] == 5.0
-    with pytest.raises(TypeError):
-        scan_input.options["budget"] = 1.0  # type: ignore[index]
+    assert scan_input.options["nested"] == {"k": [1]}
 
 
-def test_module_result_mappings_are_frozen() -> None:
-    """raw_output and summary are copied and read-only for the same reason."""
+def test_module_result_mappings_are_isolated_from_the_caller() -> None:
+    """raw_output and summary are deep snapshots for the same reason."""
+    raw = {"steps": ["a"]}
     result = contract.ModuleResult(
-        schema_version="x/1", raw_output={"a": 1}, summary={"b": 2}
+        schema_version="x/1", raw_output=raw, summary={"b": 2}
     )
-    with pytest.raises(TypeError):
-        result.raw_output["a"] = 9  # type: ignore[index]
-    with pytest.raises(TypeError):
-        result.summary["b"] = 9  # type: ignore[index]
+    raw["steps"].append("b")
+    assert result.raw_output == {"steps": ["a"]}
+    # Still plain JSON data, so it survives the JSONB serialization boundary.
+    assert json.loads(json.dumps(dict(result.raw_output))) == {"steps": ["a"]}
 
 
 def test_scan_input_validates_the_timeout() -> None:
     """The timeout is a positive float — not zero, negative, text, or bool."""
     assert contract.ScanInput(target_domain="a.example", timeout=2.5).timeout == 2.5
-    for bad in (0, -1.0, "5", True):
+    for bad in (0, -1.0, "5", True, float("inf"), float("nan")):
         with pytest.raises(ValueError, match="timeout"):
             contract.ScanInput(target_domain="a.example", timeout=bad)  # type: ignore[arg-type]
 

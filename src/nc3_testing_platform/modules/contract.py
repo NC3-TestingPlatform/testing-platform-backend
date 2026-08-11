@@ -19,11 +19,12 @@ under prefork and gevent alike, and Celery time limits are a backstop, not
 the mechanism.
 """
 
+import copy
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from logging import getLogger
-from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from nc3_testing_platform.core.enums import (
@@ -34,6 +35,22 @@ from nc3_testing_platform.core.enums import (
 )
 
 logger = getLogger(__name__)
+
+
+def _snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
+    """A deep, independent copy of a JSON-shaped payload mapping.
+
+    These fields (`options`, `evidence`, `raw_output`, `summary`) map onto
+    JSONB columns and cross the child-process pipe as plain data, so the
+    snapshot stays a plain ``dict``/``list`` tree — it must survive
+    ``json.dumps`` at the persistence boundary, which a ``MappingProxyType``
+    would not. Deep-copying breaks aliasing to the caller's structure (two
+    modules fanned out from one task configuration cannot corrupt each
+    other), which is the mutation the contract actually guards against; the
+    snapshot itself is read-only by convention, as every consumer treats a
+    result.
+    """
+    return copy.deepcopy(dict(value))
 
 # The egress queues a module may declare, keyed by the classification that
 # implies each. The names are the ones `worker/app.py` routes and
@@ -156,11 +173,11 @@ class ScanInput:
             self.timeout, (int, float)
         ):
             raise ValueError("`timeout` is a float in seconds.")
-        if self.timeout <= 0:
-            raise ValueError("`timeout` must be positive.")
-        # "frozen" protects the attribute, not the dict it points at; copy and
-        # freeze so a module cannot mutate one caller's options under another.
-        object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
+        if not math.isfinite(self.timeout) or self.timeout <= 0:
+            raise ValueError("`timeout` must be a positive, finite number of seconds.")
+        # "frozen" protects the attribute, not the dict it points at; snapshot
+        # so a module cannot mutate one caller's options under another.
+        object.__setattr__(self, "options", _snapshot(self.options))
 
 
 @dataclass(frozen=True)
@@ -188,9 +205,7 @@ class NormalizedFinding:
         if not self.title:
             raise ValueError(f"finding {self.check_id!r} has an empty title.")
         if self.evidence is not None:
-            object.__setattr__(
-                self, "evidence", MappingProxyType(dict(self.evidence))
-            )
+            object.__setattr__(self, "evidence", _snapshot(self.evidence))
 
 
 @dataclass(frozen=True)
@@ -215,8 +230,8 @@ class ModuleResult:
     def __post_init__(self) -> None:
         if not self.schema_version:
             raise ValueError("A result must name its schema_version.")
-        object.__setattr__(self, "raw_output", MappingProxyType(dict(self.raw_output)))
-        object.__setattr__(self, "summary", MappingProxyType(dict(self.summary)))
+        object.__setattr__(self, "raw_output", _snapshot(self.raw_output))
+        object.__setattr__(self, "summary", _snapshot(self.summary))
 
 
 @dataclass(frozen=True)
