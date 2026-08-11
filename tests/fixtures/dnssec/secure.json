@@ -1,0 +1,60 @@
+{
+  "domain": "example.com",
+  "record_type": "A",
+  "status": "secure",
+  "trust_anchor_keys": ["DS=20326/SHA-256", "DS=38696/SHA-256"],
+  "chain": [
+    {
+      "zone": ".",
+      "parent_zone": "",
+      "status": "secure",
+      "ds_records": [],
+      "dnskeys": ["DNSKEY=20326/SEP", "DNSKEY=38696/SEP"],
+      "ds_matched": ["DS=20326 -> DNSKEY=20326"],
+      "rrsig_used": 20326,
+      "errors": [],
+      "warnings": [],
+      "notes": []
+    },
+    {
+      "zone": "com.",
+      "parent_zone": ".",
+      "status": "secure",
+      "ds_records": ["DS=19718/SHA-256"],
+      "dnskeys": ["DNSKEY=19718/SEP", "DNSKEY=59354/ZSK"],
+      "ds_matched": ["DS=19718 -> DNSKEY=19718"],
+      "rrsig_used": 19718,
+      "errors": [],
+      "warnings": [],
+      "notes": []
+    },
+    {
+      "zone": "example.com.",
+      "parent_zone": "com.",
+      "status": "secure",
+      "ds_records": ["DS=370/SHA-256"],
+      "dnskeys": ["DNSKEY=370/SEP", "DNSKEY=45620/ZSK"],
+      "ds_matched": ["DS=370 -> DNSKEY=370"],
+      "rrsig_used": 370,
+      "errors": [],
+      "warnings": [],
+      "notes": []
+    }
+  ],
+  "leaf": {
+    "qname": "example.com.",
+    "record_type": "A",
+    "records": ["93.184.216.34"],
+    "rrsig_used": 45620,
+    "rrsig_expires": "2026-09-01T00:00:00Z",
+    "cname_chain": [],
+    "nxdomain": false,
+    "nodata": false,
+    "status": "secure",
+    "errors": [],
+    "warnings": [],
+    "notes": []
+  },
+  "errors": [],
+  "warnings": []
+}

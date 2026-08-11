@@ -10,6 +10,7 @@ executable-test catalog, so it can stay on the roster without ever being
 scheduled.
 """
 
+import math
 from dataclasses import dataclass
 
 from nc3_testing_platform.core.enums import (
@@ -43,6 +44,23 @@ MAX_BUDGET = 120.0
 _ENGINE_ENTRY = "nc3_testing_platform.modules.noop.engine:assess"
 
 
+def _clamp_budget(raw: object) -> float:
+    """A caller-supplied ``options["budget"]`` coerced into a safe bound.
+
+    Bounds on both sides: a non-number, non-finite, or non-positive value
+    falls back to the default, and anything over ``MAX_BUDGET`` is capped, so
+    an untrusted launch-request value can neither fail every scan instantly
+    nor pin a worker slot.
+    """
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_BUDGET
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_BUDGET
+    return min(value, MAX_BUDGET)
+
+
 @dataclass(frozen=True)
 class NoopModule:
     """A complete :class:`~nc3_testing_platform.modules.contract.TestModule`.
@@ -69,7 +87,7 @@ class NoopModule:
         """
         if scan_input.target_domain is None:
             raise ValueError("web.noop scans a domain, not a file.")
-        budget = min(float(scan_input.options.get("budget", DEFAULT_BUDGET)), MAX_BUDGET)
+        budget = _clamp_budget(scan_input.options.get("budget", DEFAULT_BUDGET))
         outcome = run_engine(
             _ENGINE_ENTRY,
             args=(scan_input.target_domain,),

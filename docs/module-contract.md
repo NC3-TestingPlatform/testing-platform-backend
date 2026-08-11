@@ -250,6 +250,50 @@ declaration gates, user cancellation — never module decisions.
    to need it, the contract is missing something: raise it on US #76's
    thread instead of coupling.
 
+## Worked example — the DNSSEC module
+
+`modules/dnssec/` is the first module to wrap a real engine
+(chainvalidator) and the template the other M* stories follow. Four small
+files, one per contract concern:
+
+- **`schema.py`** — the version pins (`ENGINE_VERSION` = the pinned
+  chainvalidator tag, `SCHEMA_VERSION` = the module's own result schema) and
+  the stable `check_id` constants. Everything that must not drift casually
+  lives here, so a change to it is a visible edit.
+- **`runner.py`** — `run_dnssec()` calls
+  `execution.run_engine("chainvalidator.assessor:assess", …)` with
+  `record_type` and `timeout` from the input, a `budget` clamped to
+  `MAX_BUDGET`, and the task's `ProgressEmitter`. The engine entry is a
+  parameter, defaulting to chainvalidator's real one — which is the seam the
+  tests use to replay recorded output offline.
+- **`mapping.py`** — `normalize()` turns the marshalled `DNSSECReport` dict
+  into `NormalizedFinding`s: one overall `dnssec.chain_of_trust`, plus one
+  per non-secure delegation (`dnssec.delegation.<status>` keyed on the zone)
+  and a non-secure leaf. `map_status_severity()` is the module's **own**
+  severity table — chainvalidator reports `secure`/`insecure`/`bogus`/
+  `error`, not the `VerdictSeverity` tiers, so this module overrides the hook
+  rather than delegating to the 1:1 default (bogus → HIGH, insecure →
+  MEDIUM, error → LOW, secure → INFO).
+- **`__init__.py`** — the frozen `DnssecModule` tying descriptor + `run()` +
+  `map_severity()` together, and `MODULE`, the object the entry point
+  resolves to.
+
+The engine binding is a **string** (`"chainvalidator.assessor:assess"`)
+resolved inside the runner's child, so `modules/dnssec/` imports nothing from
+chainvalidator: the module is discoverable, and its descriptor readable,
+without the engine installed. chainvalidator is declared only in the
+`modules` optional-dependency extra (pinned to a tag), which the worker
+images provision (B1); the default install and the test suite never need it.
+
+Testing follows the plan's cost rule: **mapping is verified against recorded
+engine output** — JSON fixtures under `tests/fixtures/dnssec/` captured in
+the marshalled `asdict()` shape — so no test touches the network. The
+contract conformance suite runs against the same recorded data through a
+replay engine (`tests/dnssec_replay_engine.py`) that the runner drives in a
+real child process, exercising discovery, child execution, progress
+marshalling, and normalization end to end while staying offline. The module
+passes the identical `assert_conformance_*` helpers the no-op does.
+
 ## What future revisions must do
 
 - New egress queue or classification: extend `QUEUE_BY_CLASSIFICATION`,

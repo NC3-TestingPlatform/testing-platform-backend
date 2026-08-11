@@ -1,0 +1,48 @@
+{
+  "domain": "insecure-zone.example",
+  "record_type": "A",
+  "status": "insecure",
+  "trust_anchor_keys": ["DS=20326/SHA-256", "DS=38696/SHA-256"],
+  "chain": [
+    {
+      "zone": ".",
+      "parent_zone": "",
+      "status": "secure",
+      "ds_records": [],
+      "dnskeys": ["DNSKEY=20326/SEP"],
+      "ds_matched": ["DS=20326 -> DNSKEY=20326"],
+      "rrsig_used": 20326,
+      "errors": [],
+      "warnings": [],
+      "notes": []
+    },
+    {
+      "zone": "example.",
+      "parent_zone": ".",
+      "status": "insecure",
+      "ds_records": [],
+      "dnskeys": [],
+      "ds_matched": [],
+      "rrsig_used": null,
+      "errors": [],
+      "warnings": ["no DS record at parent; delegation is unsigned"],
+      "notes": ["zone is unsigned"]
+    }
+  ],
+  "leaf": {
+    "qname": "insecure-zone.example.",
+    "record_type": "A",
+    "records": ["203.0.113.10"],
+    "rrsig_used": null,
+    "rrsig_expires": "",
+    "cname_chain": [],
+    "nxdomain": false,
+    "nodata": false,
+    "status": "insecure",
+    "errors": [],
+    "warnings": [],
+    "notes": ["record is not covered by DNSSEC"]
+  },
+  "errors": [],
+  "warnings": ["chain is not anchored end-to-end"]
+}

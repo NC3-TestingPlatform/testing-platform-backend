@@ -15,6 +15,7 @@ import time
 from importlib.metadata import EntryPoint
 from pathlib import Path
 
+import conformance
 import pytest
 
 from nc3_testing_platform.core.enums import (
@@ -518,59 +519,30 @@ def test_core_never_imports_modules() -> None:
     assert offenders == []
 
 
-# --- conformance suite (every module must pass; dnssec joins in Phase 2) -----
-
-CONFORMING_MODULES = (noop.MODULE,)
-
-
-@pytest.fixture(
-    params=CONFORMING_MODULES,
-    ids=lambda module: module.descriptor.tests[0].test_key,
-)
-def conforming_module(request: pytest.FixtureRequest) -> contract.TestModule:
-    """Each registered module, run through the identical conformance checks."""
-    return request.param
+# --- conformance suite ------------------------------------------------------
+#
+# The shared checks live in `tests/conformance.py` (a neutral module, not a
+# test module) so the dnssec exemplar can run the identical suite from its own
+# test file without importing from a collected test module.
 
 
-def test_conformance_protocol_and_descriptor(
-    conforming_module: contract.TestModule,
-) -> None:
-    """The module satisfies the protocol and declares platform vocabulary."""
-    assert isinstance(conforming_module, contract.TestModule)
-    descriptor = conforming_module.descriptor
-    assert isinstance(descriptor.name, ScanModule)
-    assert isinstance(descriptor.classification, ScanClassification)
-    assert descriptor.queue in contract.MODULE_QUEUES
+def test_noop_conformance_protocol_and_descriptor() -> None:
+    """The noop reference passes the shared descriptor conformance check."""
+    conformance.assert_protocol_and_descriptor(noop.MODULE)
 
 
-def test_conformance_severity_hook(conforming_module: contract.TestModule) -> None:
-    """The hook covers the engines' five tiers and refuses the unknown."""
+def test_noop_conformance_severity_hook() -> None:
+    """The noop delegates to the 1:1 default, so it maps all five tiers."""
     for tier in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
-        assert isinstance(conforming_module.map_severity(tier), FindingSeverity)
-    with pytest.raises(ValueError):
-        conforming_module.map_severity("not-a-severity")
+        assert isinstance(noop.MODULE.map_severity(tier), FindingSeverity)
+    conformance.assert_severity_hook_rejects_garbage(noop.MODULE)
 
 
-def test_conformance_run_end_to_end(conforming_module: contract.TestModule) -> None:
-    """One full run: child process, marshalled progress, normalized result.
-
-    The JSON round trip of `raw_output` is the marshalling test: the report
-    crossed the process boundary as plain data, not as a pickled object.
-    """
-    sink = _RecordingSink()
-    test_key = conforming_module.descriptor.tests[0].test_key
-    result = conforming_module.run(
-        contract.ScanInput(target_domain="example.com", timeout=2.0),
-        progress=contract.ProgressEmitter(test_key=test_key, sink=sink),
+def test_noop_conformance_run_end_to_end() -> None:
+    """The noop reference passes the shared end-to-end conformance check."""
+    conformance.assert_run_end_to_end(
+        noop.MODULE, contract.ScanInput(target_domain="example.com", timeout=2.0)
     )
-    assert isinstance(result, contract.ModuleResult)
-    assert result.schema_version
-    assert json.loads(json.dumps(dict(result.raw_output))) == dict(result.raw_output)
-    assert result.findings
-    for finding in result.findings:
-        assert isinstance(finding.severity, FindingSeverity)
-        assert finding.check_id
-    assert sink.events, "a run must narrate at least one progress step"
 
 
 # --- noop specifics ----------------------------------------------------------
