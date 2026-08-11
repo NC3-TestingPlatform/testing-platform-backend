@@ -45,6 +45,14 @@ Autogenerate proposes; you decide. Before committing one:
    `op.alter_column(..., new_column_name=...)` / `op.rename_table(...)`.
 4. Constraint and index names must come from the naming convention in
    `core/db.py` — if a name looks hand-invented, it will never diff cleanly again.
+5. Adding a constraint to a **populated** table validates every existing row
+   under the constraint's lock — `ACCESS EXCLUSIVE` for a CHECK,
+   `SHARE ROW EXCLUSIVE` on both tables for a foreign key. Fine while the
+   wipe rules below apply (every environment is rebuildable, tables are
+   empty); after the first release, add such constraints as
+   `NOT VALID` and run `VALIDATE CONSTRAINT` in a separate statement — the
+   validation then needs only `SHARE UPDATE EXCLUSIVE` on the altered table
+   (plus `ROW SHARE` on the referenced table for a foreign key).
 
 ## What autogenerate misses
 
@@ -65,9 +73,13 @@ Autogenerate proposes; you decide. Before committing one:
   the diff. Rewrite those by hand as a drop-and-create pair; the structural
   tests (`EXPECTED_CHECKS`) are what actually pin the expressions.
 - **Renames** (above) — always drop-and-create unless rewritten.
-- **Row-level security, grants, triggers.** Deliberately outside the models;
-  when they arrive (RLS is descoped to a later phase), they are hand-written
-  operations.
+- **Roles, grants, row-level security, triggers.** Deliberately outside the
+  models, so autogenerate never proposes them and `alembic check` never
+  notices them missing. The `nc3_app` role and its grants are hand-written
+  operations (see the `nc3_app role and grants` revision and
+  [database-roles.md](database-roles.md)); every revision that creates a table
+  must `GRANT` on it by hand in the same revision. RLS policies (B5) will
+  follow the same rule.
 
 ## Wipe rules
 

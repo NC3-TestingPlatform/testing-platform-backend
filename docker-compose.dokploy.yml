@@ -20,6 +20,10 @@ x-worker: &worker
   environment: &worker-env
     CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+    # Runtime role connection (docs/database-roles.md); unused until the session layer lands (B5).
+    # The password is interpolated raw: if it contains URL-reserved characters
+    # (@ : / % ? #), also set APP_DATABASE_URL with it percent-encoded.
+    APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
     REDIS_URL: redis://redis:6379/0
     CELERY_MAX_TASKS_PER_CHILD: ${CELERY_MAX_TASKS_PER_CHILD:-100}
     SCAN_TASK_TIMEOUT_SECONDS: ${SCAN_TASK_TIMEOUT_SECONDS:-120}
@@ -42,6 +46,10 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
+      # Runtime role connection (docs/database-roles.md); unused until the session layer lands (B5).
+      # The password is interpolated raw: if it contains URL-reserved characters
+      # (@ : / % ? #), also set APP_DATABASE_URL with it percent-encoded.
+      APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
       REDIS_URL: redis://redis:6379/0
       OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
