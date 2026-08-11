@@ -22,6 +22,12 @@ dependencies = [
 [project.scripts]
 export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 
+# Scan modules register here and are discovered by modules/registry.py;
+# nothing imports them by name (US #76, IDR-007). External module packages
+# add their own entry to this group in their own pyproject.toml.
+[project.entry-points."nc3_testing_platform.modules"]
+noop = "nc3_testing_platform.modules.noop:MODULE"
+
 [dependency-groups]
 dev = [
     "defusedxml>=0.7.1",
