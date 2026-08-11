@@ -105,6 +105,21 @@ async def test_challenge_is_scope_bound_and_expiring(fake: FakeAsyncRedis) -> No
     )
 
 
+async def test_crafted_nonce_cannot_cross_scope_boundary(fake: FakeAsyncRedis) -> None:
+    """A `:` smuggled into the nonce must not reassemble another scope's key."""
+    challenge = await redis_utils.issue_challenge(
+        "a:b", difficulty=5, ttl_seconds=120, client=fake
+    )
+    crafted = await redis_utils.verify_and_consume(
+        "a", f"b:{challenge.nonce}", client=fake
+    )
+    assert crafted is None
+    # The crafted attempt must not have consumed the real challenge.
+    assert (
+        await redis_utils.verify_and_consume("a:b", challenge.nonce, client=fake) == 5
+    )
+
+
 async def test_unknown_challenge_is_none(fake: FakeAsyncRedis) -> None:
     """Unknown, expired, and consumed challenges are indistinguishable."""
     assert await redis_utils.verify_and_consume("s", "0" * 32, client=fake) is None

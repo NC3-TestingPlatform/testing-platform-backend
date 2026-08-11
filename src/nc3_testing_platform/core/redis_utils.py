@@ -19,6 +19,7 @@ the compose stack's persistence-off Redis (`infra/compose/redis.yml`).
 """
 
 import json
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Any
@@ -94,6 +95,12 @@ async def consume(
     )
 
 
+# What issue_challenge emits: secrets.token_hex(16). Anything else is rejected
+# before it can reach a key — a `:` smuggled into the nonce would otherwise let
+# scope "a" redeem a challenge issued for scope "a:b".
+_NONCE_RE = re.compile(r"[0-9a-f]{32}")
+
+
 @dataclass(frozen=True)
 class PowChallenge:
     """An issued proof-of-work challenge: what the client gets to solve."""
@@ -132,8 +139,11 @@ async def verify_and_consume(
     GETDEL makes consumption atomic: two concurrent redemptions of one nonce
     cannot both succeed. Returns the stored difficulty (the caller still
     checks the solution against it), or ``None`` for an unknown, expired, or
-    already-consumed challenge — the three are deliberately indistinguishable.
+    already-consumed challenge — the three are deliberately indistinguishable
+    (and so is a malformed nonce, rejected before it can touch a key).
     """
+    if _NONCE_RE.fullmatch(nonce) is None:
+        return None
     con = client if client is not None else get_client()
     value = await con.getdel(f"pow:{scope}:{nonce}")
     return None if value is None else int(value)
