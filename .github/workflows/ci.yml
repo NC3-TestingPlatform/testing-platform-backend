@@ -40,6 +40,41 @@ jobs:
       - name: Test
         run: uv run --locked pytest
 
+  # Taiga #157: the fakeredis unit tests run everywhere; this job re-runs the
+  # marker-gated round trips against a real server, guarding fakeredis drift.
+  redis-integration:
+    name: Redis integration
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        # Digest-pinned like the postgres service; matches the compose tag family.
+        image: redis:8-trixie@sha256:344e3945a0b431c8ff1eecd58c5573538126bd756f02fc7e218ddf1fc2546366
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    env:
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run the redis-marked tests
+        run: uv run --locked pytest -m redis
+
   migrations:
     name: Migration round trip
     runs-on: ubuntu-latest
