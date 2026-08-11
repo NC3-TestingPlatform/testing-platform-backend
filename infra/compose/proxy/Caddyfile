@@ -1,0 +1,29 @@
+# Development entry point (Taiga #158): the browser-facing way into the API.
+# The API container keeps its own loopback port for direct curl; this proxy is
+# what a frontend points at, so proxy-sensitive behaviour (SSE pass-through)
+# is exercised in development instead of being discovered in deployment.
+#
+# Deployment does NOT run this file: Dokploy fronts the API with its own
+# reverse proxy (TLS and HTTP/2 terminate there). See README, "Deploying with
+# Dokploy".
+{
+	# Plain HTTP on a loopback port; no certificates in development.
+	auto_https off
+}
+
+:80 {
+	# Server-sent events must reach the client as they are written: a proxy's
+	# default response buffering can hold small writes back, and a progress
+	# stream that arrives in one lump when the job ends is useless.
+	# flush_interval -1 flushes every write immediately.
+	@sse path /api/v1/scans/*/events
+	handle @sse {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy api:8000
+	}
+}

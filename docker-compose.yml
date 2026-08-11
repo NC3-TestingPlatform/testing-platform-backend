@@ -10,6 +10,7 @@ name: nc3-testing-platform
 
 include:
   - infra/compose/api.yml
+  - infra/compose/proxy.yml
   - infra/compose/postgres.yml
   - infra/compose/redis.yml
   - infra/compose/rabbitmq.yml

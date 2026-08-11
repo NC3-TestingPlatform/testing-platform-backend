@@ -53,7 +53,9 @@ make logs    # follow logs
 make down    # stop
 ```
 
-`docker compose up` starts the API (http://localhost:8000), PostgreSQL, Redis, RabbitMQ, the Celery workers (one per egress queue) and beat, plus a development identity provider. The root `docker-compose.yml` is an index of `include:`s; each service is defined in its own file under `infra/compose/`.
+`docker compose up` starts the API (http://localhost:8000), a Caddy reverse proxy in front of it (http://localhost:8888), PostgreSQL, Redis, RabbitMQ, the Celery workers (one per egress queue) and beat, plus a development identity provider. The root `docker-compose.yml` is an index of `include:`s; each service is defined in its own file under `infra/compose/`.
+
+Two ways into the API, on purpose: the proxy port (8888) is the browser-facing entry a frontend should point at, so proxy-sensitive behaviour — server-sent events pass-through above all — is exercised in development; the API's own port (8000) stays published for direct `curl` against the app with no proxy in between.
 
 To see a job round-trip through the stack — RabbitMQ to the workers to a row in PostgreSQL:
 
@@ -68,6 +70,8 @@ Workers refuse to start if their image is missing the external binaries their qu
 # Deploying with Dokploy
 
 `docker-compose.dokploy.yml` is the deployment stack: self-contained (no includes), no published ports except the API through Dokploy's reverse proxy, no development identity provider, and no default credentials — every secret must be set in the Dokploy application's environment tab or the stack refuses to start. Point the Dokploy compose service at that file and set: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_COOKIE` (and optionally `OIDC_DISCOVERY_URL` for an external OIDC provider).
+
+**Reverse proxy in deployment:** the development Caddy (`infra/compose/proxy.yml`) is deliberately absent here — Dokploy fronts the API with its own reverse proxy, which terminates TLS and HTTP/2. One setting matters and cannot ship as config in this repo: that proxy must not buffer `text/event-stream` responses, or the scan progress stream (`GET /api/v1/scans/{id}/events`) arrives in one lump when the job ends. Verify SSE pass-through when setting up the Dokploy service. (CI's smoke test verifies routing, the `text/event-stream` headers, and that event payloads arrive through the development proxy; the mock emits its events instantly, so buffering under a slow producer becomes testable once real scan events pace the stream.)
 
 # Generating the OpenAPI contract
 
