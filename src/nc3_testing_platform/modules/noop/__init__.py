@@ -31,9 +31,14 @@ from nc3_testing_platform.modules.execution import run_engine
 
 SCHEMA_VERSION = "noop/1.0"
 
-# The default wall-clock budget for the engine child. Generous on purpose:
-# the noop engine finishes in milliseconds unless a test asks it to stall.
+# The default wall-clock budget for the engine child, and the ceiling a
+# caller-supplied `options["budget"]` is clamped to. The clamp matters
+# because `options` is the task `configuration` JSONB, which originates in
+# the launch request: an unclamped `{"budget": 1e9}` would pin a worker slot
+# and a child for the life of the process. A real module sets its ceiling
+# from the engine's expected worst case.
 DEFAULT_BUDGET = 30.0
+MAX_BUDGET = 120.0
 
 _ENGINE_ENTRY = "nc3_testing_platform.modules.noop.engine:assess"
 
@@ -64,6 +69,7 @@ class NoopModule:
         """
         if scan_input.target_domain is None:
             raise ValueError("web.noop scans a domain, not a file.")
+        budget = min(float(scan_input.options.get("budget", DEFAULT_BUDGET)), MAX_BUDGET)
         outcome = run_engine(
             _ENGINE_ENTRY,
             args=(scan_input.target_domain,),
@@ -72,7 +78,7 @@ class NoopModule:
                 "delay": float(scan_input.options.get("delay", 0.0)),
                 "fail": bool(scan_input.options.get("fail", False)),
             },
-            budget=float(scan_input.options.get("budget", DEFAULT_BUDGET)),
+            budget=budget,
             progress=progress,
         )
         report = outcome.unwrap()

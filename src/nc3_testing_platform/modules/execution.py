@@ -142,11 +142,17 @@ def _child_main(conn: Connection, spec: dict[str, Any]) -> None:
         # instead of refusing the report over one exotic field.
         conn.send(json.dumps({"kind": "result", "report": payload}, default=str))
     except BaseException as exc:  # the boundary reports failures, never raises
-        conn.send(
-            json.dumps(
-                {"kind": "error", "type": type(exc).__name__, "message": str(exc)}
+        try:
+            conn.send(
+                json.dumps(
+                    {"kind": "error", "type": type(exc).__name__, "message": str(exc)}
+                )
             )
-        )
+        except (OSError, ValueError):
+            # The parent already closed the pipe (e.g. after a budget kill);
+            # there is no one to tell. Exit quietly rather than die with a
+            # chained traceback.
+            pass
     finally:
         conn.close()
 
@@ -184,9 +190,11 @@ def _reap(process: multiprocessing.process.BaseProcess, grace: float) -> None:
     if process.is_alive():
         _signal_group(process.pid, signal.SIGKILL)
         process.kill()
+    # No group signal after this join: it reaps the child and releases its PID,
+    # which the OS may reuse — signalling that PID's group could hit a stranger.
+    # The SIGKILL above, sent while the leader was still alive, already took the
+    # whole group (grandchildren included) down with it.
     process.join()
-    # A dead group leader still reaches lingering grandchildren with SIGKILL.
-    _signal_group(process.pid, signal.SIGKILL)
 
 
 def run_engine(
@@ -251,13 +259,9 @@ def run_engine(
             try:
                 kind = message["kind"]
                 if kind == "progress":
-                    # Delivery is advisory: a failing sink degrades progress
-                    # visibility, it never fails an otherwise-healthy run
-                    # (mirrors the child writer's swallow).
-                    try:
-                        progress.emit(message["message"], channel=message["channel"])
-                    except Exception:
-                        logger.exception("progress sink for %s raised", entry)
+                    # Delivery is advisory; ProgressEmitter.emit swallows a
+                    # failing sink, so a broken sink never fails a healthy run.
+                    progress.emit(message["message"], channel=message["channel"])
                 elif kind == "result":
                     report = message["report"]
                 else:

@@ -25,6 +25,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from logging import getLogger
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from nc3_testing_platform.core.enums import (
@@ -57,11 +58,13 @@ def _snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
 # `worker/preflight.py` validates; a drift test asserts they stay identical.
 # `platform` is deliberately absent: orchestration tasks live there, modules
 # never do.
-QUEUE_BY_CLASSIFICATION: Mapping[ScanClassification, str] = {
-    ScanClassification.NON_INTRUSIVE: "non-intrusive-scan",
-    ScanClassification.INTRUSIVE: "intrusive-scan",
-    ScanClassification.NOT_APPLICABLE: "file-analysis",
-}
+QUEUE_BY_CLASSIFICATION: Mapping[ScanClassification, str] = MappingProxyType(
+    {
+        ScanClassification.NON_INTRUSIVE: "non-intrusive-scan",
+        ScanClassification.INTRUSIVE: "intrusive-scan",
+        ScanClassification.NOT_APPLICABLE: "file-analysis",
+    }
+)
 
 MODULE_QUEUES = frozenset(QUEUE_BY_CLASSIFICATION.values())
 
@@ -169,6 +172,10 @@ class ScanInput:
             raise ValueError(
                 "Exactly one of `target_domain` and `file_path` is set."
             )
+        # An empty string is a present-but-useless target: reject it here as an
+        # input error, rather than let it reach the engine as an opaque one.
+        if any(value is not None and not value.strip() for value in targets):
+            raise ValueError("The target must be a non-empty string.")
         if isinstance(self.timeout, bool) or not isinstance(
             self.timeout, (int, float)
         ):
@@ -273,12 +280,21 @@ class ProgressEmitter:
     sink: Callable[[ProgressEvent], None] | None = None
 
     def emit(self, message: str, *, channel: str = "progress") -> None:
-        """Deliver one event to the sink, or log it when no sink is wired."""
+        """Deliver one event to the sink, or log it when no sink is wired.
+
+        Progress is advisory on every path: a sink that raises is logged and
+        swallowed here, so a failing delivery never fails the run whether the
+        line came from the engine (via the runner) or from a module narrating
+        its own steps in-process.
+        """
         event = ProgressEvent(test_key=self.test_key, message=message, channel=channel)
         if self.sink is None:
             logger.info("%s [%s] %s", event.test_key, event.channel, event.message)
             return
-        self.sink(event)
+        try:
+            self.sink(event)
+        except Exception:
+            logger.exception("progress sink for %s raised", event.test_key)
 
     def progress_cb(self, message: str) -> None:
         """The standard engine callback: one short status string per step."""

@@ -11,8 +11,6 @@ import ast
 import json
 import logging
 import os
-import signal
-import tempfile
 import time
 from importlib.metadata import EntryPoint
 from pathlib import Path
@@ -142,6 +140,15 @@ def test_scan_input_accepts_each_target_kind() -> None:
     assert contract.ScanInput(file_path="/uploads/sample.bin").file_path
 
 
+def test_scan_input_rejects_an_empty_target() -> None:
+    """A present-but-blank target is an input error, not an engine error."""
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="non-empty"):
+            contract.ScanInput(target_domain=blank)
+        with pytest.raises(ValueError, match="non-empty"):
+            contract.ScanInput(file_path=blank)
+
+
 def test_scan_input_options_are_isolated_from_the_caller() -> None:
     """`options` is a deep snapshot: one module cannot corrupt another's config.
 
@@ -233,6 +240,18 @@ def test_emitter_without_a_sink_logs_instead(
     with caplog.at_level(logging.INFO, logger="nc3_testing_platform.modules.contract"):
         emitter.progress_cb("still here")
     assert "still here" in caplog.text
+
+
+def test_emit_swallows_a_failing_sink(caplog: pytest.LogCaptureFixture) -> None:
+    """A raising sink is logged and swallowed, on the in-process path too."""
+
+    def _angry_sink(_event: contract.ProgressEvent) -> None:
+        raise RuntimeError("sink down")
+
+    emitter = contract.ProgressEmitter(test_key="web.noop", sink=_angry_sink)
+    with caplog.at_level(logging.ERROR, logger="nc3_testing_platform.modules.contract"):
+        emitter.progress_cb("narrating a step")  # must not raise
+    assert "progress sink" in caplog.text
 
 
 # --- execution runner --------------------------------------------------------
@@ -332,33 +351,42 @@ def test_run_engine_survives_a_failing_progress_sink() -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-only")
-def test_run_engine_kills_a_grandchild_subprocess() -> None:
+def test_run_engine_kills_a_grandchild_subprocess(tmp_path: Path) -> None:
     """A budget kill must reach the subprocess an engine shelled out to.
 
-    The engine child spawns a long `sleep` and records its PID before
+    A test-only engine spawns a long `sleep` and records its PID before
     stalling; after the budget kills the group, that PID must be gone —
-    otherwise a killed subdomainenum/portscanner leaks subfinder/nmap.
+    otherwise a killed subdomainenum/portscanner leaks subfinder/nmap. The
+    PID is only ever probed with signal 0 (never SIGKILL'd from the test), so
+    a reused PID on a busy host cannot make the test harm a stranger.
     """
-    pid_file = Path(tempfile.gettempdir()) / f"noop-grandchild-{os.getpid()}.pid"
-    if pid_file.exists():
-        pid_file.unlink()
+    pid_file = tmp_path / "grandchild.pid"
     emitter = contract.ProgressEmitter(test_key="web.noop", sink=_RecordingSink())
     outcome = execution.run_engine(
-        "nc3_testing_platform.modules.noop.engine:assess",
+        "grandchild_engine:assess",
         args=("example.com",),
-        kwargs={"timeout": 1.0, "spawn_child_pidfile": str(pid_file)},
+        kwargs={"timeout": 1.0, "pidfile": str(pid_file)},
         budget=1.5,
         grace=1.0,
         progress=emitter,
     )
     assert outcome.timed_out
+
+    def _pid() -> int | None:
+        """The recorded grandchild PID once the file holds a complete int."""
+        if not pid_file.exists():
+            return None
+        text = pid_file.read_text().strip()
+        return int(text) if text.isdigit() else None
+
     deadline = time.monotonic() + 5.0
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert pid_file.exists(), "the engine child never recorded its grandchild"
-    grandchild_pid = int(pid_file.read_text())
-    pid_file.unlink()
-    # Give the group kill a moment to propagate, then the PID must be dead.
+    grandchild_pid: int | None = None
+    while grandchild_pid is None and time.monotonic() < deadline:
+        grandchild_pid = _pid()
+        if grandchild_pid is None:
+            time.sleep(0.05)
+    assert grandchild_pid is not None, "the engine child never recorded its grandchild"
+
     gone = False
     for _ in range(100):
         try:
@@ -367,11 +395,6 @@ def test_run_engine_kills_a_grandchild_subprocess() -> None:
             gone = True
             break
         time.sleep(0.05)
-    if not gone:  # pragma: no cover - only on a leak, and we clean up first
-        try:
-            os.kill(grandchild_pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
     assert gone, f"grandchild {grandchild_pid} survived the budget kill"
 
 
@@ -417,6 +440,29 @@ def test_discovery_rejects_duplicate_entry_names() -> None:
         EntryPoint("noop", noop_entry, registry.ENTRY_POINT_GROUP),
     )
     with pytest.raises(registry.ModuleRegistryError, match="registered twice"):
+        registry.discover(entry_points=entries)
+
+
+def test_discovery_rejects_a_non_descriptor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A descriptor that is not a ModuleDescriptor fails the registry contract."""
+
+    class _BadModule:
+        descriptor = None
+
+        def run(self, scan_input, *, progress):  # pragma: no cover - never called
+            raise NotImplementedError
+
+        def map_severity(self, engine_severity):  # pragma: no cover - never called
+            raise NotImplementedError
+
+    monkeypatch.setattr(noop, "_BAD_FOR_TEST", _BadModule(), raising=False)
+    entries = (
+        EntryPoint(
+            "bad", "nc3_testing_platform.modules.noop:_BAD_FOR_TEST",
+            registry.ENTRY_POINT_GROUP,
+        ),
+    )
+    with pytest.raises(registry.ModuleRegistryError, match="not ModuleDescriptor"):
         registry.discover(entry_points=entries)
 
 
@@ -537,6 +583,28 @@ def test_noop_refuses_a_file_target() -> None:
             contract.ScanInput(file_path="/uploads/sample.bin"),
             progress=contract.ProgressEmitter(test_key="web.noop"),
         )
+
+
+def test_noop_clamps_a_caller_supplied_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A giant `options["budget"]` from the launch request cannot pin a slot.
+
+    The runner is stubbed so the assertion is on the budget the module *would*
+    hand it — clamped to MAX_BUDGET — rather than on a 1e9-second wall clock.
+    """
+    captured: dict[str, float] = {}
+
+    def _fake_run_engine(entry: str, *, budget: float, progress, **_kw):
+        captured["budget"] = budget
+        return execution.EngineOutcome(
+            report={"domain": "example.com", "steps": ["s"], "verdict": "ok"}
+        )
+
+    monkeypatch.setattr(noop, "run_engine", _fake_run_engine)
+    noop.MODULE.run(
+        contract.ScanInput(target_domain="example.com", options={"budget": 1e9}),
+        progress=contract.ProgressEmitter(test_key="web.noop"),
+    )
+    assert captured["budget"] == noop.MAX_BUDGET
 
 
 def test_noop_surfaces_an_engine_timeout_as_a_failure() -> None:

@@ -24,7 +24,7 @@ discovery only guarantees the shape is plausible.
 from dataclasses import dataclass
 from importlib import metadata
 
-from nc3_testing_platform.modules.contract import TestModule
+from nc3_testing_platform.modules.contract import ModuleDescriptor, TestModule
 
 ENTRY_POINT_GROUP = "nc3_testing_platform.modules"
 
@@ -130,6 +130,14 @@ def discover(
                 f"entry point {entry_point.name!r} resolved to "
                 f"{type(implementation).__name__!r}, which does not implement "
                 "the TestModule protocol (descriptor / run / map_severity)."
+            )
+        # `runtime_checkable` verifies the member exists, not its type; a
+        # `descriptor` that is not a ModuleDescriptor would raise a raw
+        # AttributeError below, bypassing the registry's error contract.
+        if not isinstance(implementation.descriptor, ModuleDescriptor):
+            raise ModuleRegistryError(
+                f"entry point {entry_point.name!r} has a descriptor of type "
+                f"{type(implementation.descriptor).__name__!r}, not ModuleDescriptor."
             )
         for test in implementation.descriptor.tests:
             claimant = seen_test_keys.get(test.test_key)
