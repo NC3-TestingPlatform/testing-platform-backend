@@ -23,6 +23,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from logging import getLogger
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from nc3_testing_platform.core.enums import (
@@ -157,6 +158,9 @@ class ScanInput:
             raise ValueError("`timeout` is a float in seconds.")
         if self.timeout <= 0:
             raise ValueError("`timeout` must be positive.")
+        # "frozen" protects the attribute, not the dict it points at; copy and
+        # freeze so a module cannot mutate one caller's options under another.
+        object.__setattr__(self, "options", MappingProxyType(dict(self.options)))
 
 
 @dataclass(frozen=True)
@@ -183,6 +187,10 @@ class NormalizedFinding:
             raise ValueError("A finding must carry a stable, non-empty check_id.")
         if not self.title:
             raise ValueError(f"finding {self.check_id!r} has an empty title.")
+        if self.evidence is not None:
+            object.__setattr__(
+                self, "evidence", MappingProxyType(dict(self.evidence))
+            )
 
 
 @dataclass(frozen=True)
@@ -207,6 +215,8 @@ class ModuleResult:
     def __post_init__(self) -> None:
         if not self.schema_version:
             raise ValueError("A result must name its schema_version.")
+        object.__setattr__(self, "raw_output", MappingProxyType(dict(self.raw_output)))
+        object.__setattr__(self, "summary", MappingProxyType(dict(self.summary)))
 
 
 @dataclass(frozen=True)

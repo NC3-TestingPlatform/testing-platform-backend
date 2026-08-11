@@ -8,10 +8,17 @@ module is a new package (or a new entry in this one's `pyproject.toml`) and
 zero edited core files (IDR-007, task #168).
 
 Failure here is loud and total, in the spirit of `worker/preflight.py`: a
-roster with a broken entry point, an impostor object, or two claimants to
-one `test_key` raises :class:`ModuleRegistryError` instead of skipping the
-offender — a silently thinner roster produces scans that look complete and
-are not.
+roster with a broken entry point, an object missing a protocol *member*, or
+two claimants to one `test_key` raises :class:`ModuleRegistryError` instead
+of skipping the offender — a silently thinner roster produces scans that
+look complete and are not.
+
+The `isinstance` gate against :class:`TestModule` is a `runtime_checkable`
+Protocol check, so it verifies member *presence* only, not signatures or
+return types — a `run()` with the wrong parameters passes discovery and
+fails when a task first reaches it. The conformance suite
+(`tests/test_module_contract.py`) is where a module's behaviour is pinned;
+discovery only guarantees the shape is plausible.
 """
 
 from dataclasses import dataclass

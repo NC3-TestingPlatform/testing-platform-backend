@@ -10,6 +10,10 @@ conformance block at the bottom is parametrized so every future module
 import ast
 import json
 import logging
+import os
+import signal
+import tempfile
+import time
 from importlib.metadata import EntryPoint
 from pathlib import Path
 
@@ -136,6 +140,27 @@ def test_scan_input_accepts_each_target_kind() -> None:
     """A domain target and a file target are each valid alone."""
     assert contract.ScanInput(target_domain="example.com").target_domain
     assert contract.ScanInput(file_path="/uploads/sample.bin").file_path
+
+
+def test_scan_input_options_are_frozen() -> None:
+    """`options` is copied and read-only, so no module corrupts another's config."""
+    source = {"budget": 5.0}
+    scan_input = contract.ScanInput(target_domain="a.example", options=source)
+    source["budget"] = 999.0  # mutating the caller's dict must not leak in
+    assert scan_input.options["budget"] == 5.0
+    with pytest.raises(TypeError):
+        scan_input.options["budget"] = 1.0  # type: ignore[index]
+
+
+def test_module_result_mappings_are_frozen() -> None:
+    """raw_output and summary are copied and read-only for the same reason."""
+    result = contract.ModuleResult(
+        schema_version="x/1", raw_output={"a": 1}, summary={"b": 2}
+    )
+    with pytest.raises(TypeError):
+        result.raw_output["a"] = 9  # type: ignore[index]
+    with pytest.raises(TypeError):
+        result.summary["b"] = 9  # type: ignore[index]
 
 
 def test_scan_input_validates_the_timeout() -> None:
@@ -274,11 +299,74 @@ def test_run_engine_reports_a_bad_entry_as_an_error() -> None:
     assert outcome.error is not None and "AttributeError" in outcome.error
 
 
-def test_run_engine_rejects_a_nonpositive_budget() -> None:
-    """A budget of zero would mean 'kill immediately'; refuse it instead."""
+def test_run_engine_rejects_a_nonpositive_or_nonfinite_budget() -> None:
+    """Zero means 'kill immediately'; inf/nan crash the poller. Refuse all."""
     emitter = contract.ProgressEmitter(test_key="web.noop")
-    with pytest.raises(ValueError, match="budget"):
-        execution.run_engine(NOOP_ENGINE_ENTRY, budget=0, progress=emitter)
+    for bad in (0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="budget"):
+            execution.run_engine(NOOP_ENGINE_ENTRY, budget=bad, progress=emitter)
+
+
+def test_run_engine_survives_a_failing_progress_sink() -> None:
+    """A sink that raises degrades progress, never fails a healthy engine run."""
+
+    def _angry_sink(_event: contract.ProgressEvent) -> None:
+        raise RuntimeError("the sink is down")
+
+    emitter = contract.ProgressEmitter(test_key="web.noop", sink=_angry_sink)
+    outcome = execution.run_engine(
+        NOOP_ENGINE_ENTRY,
+        args=("example.com",),
+        kwargs={"timeout": 1.0},
+        budget=30.0,
+        progress=emitter,
+    )
+    assert outcome.ok
+    assert outcome.unwrap()["domain"] == "example.com"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-only")
+def test_run_engine_kills_a_grandchild_subprocess() -> None:
+    """A budget kill must reach the subprocess an engine shelled out to.
+
+    The engine child spawns a long `sleep` and records its PID before
+    stalling; after the budget kills the group, that PID must be gone —
+    otherwise a killed subdomainenum/portscanner leaks subfinder/nmap.
+    """
+    pid_file = Path(tempfile.gettempdir()) / f"noop-grandchild-{os.getpid()}.pid"
+    if pid_file.exists():
+        pid_file.unlink()
+    emitter = contract.ProgressEmitter(test_key="web.noop", sink=_RecordingSink())
+    outcome = execution.run_engine(
+        "nc3_testing_platform.modules.noop.engine:assess",
+        args=("example.com",),
+        kwargs={"timeout": 1.0, "spawn_child_pidfile": str(pid_file)},
+        budget=1.5,
+        grace=1.0,
+        progress=emitter,
+    )
+    assert outcome.timed_out
+    deadline = time.monotonic() + 5.0
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert pid_file.exists(), "the engine child never recorded its grandchild"
+    grandchild_pid = int(pid_file.read_text())
+    pid_file.unlink()
+    # Give the group kill a moment to propagate, then the PID must be dead.
+    gone = False
+    for _ in range(100):
+        try:
+            os.kill(grandchild_pid, 0)
+        except ProcessLookupError:
+            gone = True
+            break
+        time.sleep(0.05)
+    if not gone:  # pragma: no cover - only on a leak, and we clean up first
+        try:
+            os.kill(grandchild_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    assert gone, f"grandchild {grandchild_pid} survived the budget kill"
 
 
 # --- registry ----------------------------------------------------------------

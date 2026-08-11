@@ -22,8 +22,11 @@ budget here is the engine bound.
 """
 
 import json
+import math
 import multiprocessing
 import multiprocessing.process
+import os
+import signal
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
@@ -38,6 +41,11 @@ logger = getLogger(__name__)
 
 # How long a terminated child gets to die before it is killed outright.
 _DEFAULT_GRACE = 5.0
+
+# POSIX lets us put the child in its own process group and signal the whole
+# group, so an engine that shells out (subfinder, nmap, ffuf …) dies with it.
+# Elsewhere we fall back to signalling the child alone.
+_POSIX = os.name == "posix"
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,14 @@ def _child_main(conn: Connection, spec: dict[str, Any]) -> None:
     entry, engine error — is rendered to one error line; the parent never
     unpickles an exception object.
     """
+    # A new session makes this child a process-group leader (pgid == pid), so
+    # the parent can signal the whole group and take any subprocess the engine
+    # spawned with it. Best-effort: a child that cannot detach still runs.
+    if _POSIX:
+        try:
+            os.setsid()
+        except OSError:
+            pass
     try:
         module_name, _, attr = spec["entry"].partition(":")
         function = getattr(import_module(module_name), attr)
@@ -135,14 +151,42 @@ def _child_main(conn: Connection, spec: dict[str, Any]) -> None:
         conn.close()
 
 
+def _signal_group(pid: int | None, sig: int) -> None:
+    """Signal the child's whole process group on POSIX, else the child alone.
+
+    The child made itself a group leader (`os.setsid`), so its pgid equals
+    its pid and one `killpg` reaches every subprocess the engine spawned. A
+    group that has already exited (`ProcessLookupError`) is nothing to do.
+    """
+    if pid is None:
+        return
+    try:
+        if _POSIX:
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
+    except (ProcessLookupError, OSError):
+        pass
+
+
 def _reap(process: multiprocessing.process.BaseProcess, grace: float) -> None:
-    """Terminate, then kill, then join: the child never outlives the call."""
+    """Terminate the child's group, then kill it, then join: nothing outlives.
+
+    Signalling the process group — not just the runner child — is what makes
+    the budget real for engines that shell out; the plain `terminate()`/
+    `kill()` fallback covers a child that could not detach and platforms
+    without process groups.
+    """
     if process.is_alive():
+        _signal_group(process.pid, signal.SIGTERM)
         process.terminate()
         process.join(grace)
     if process.is_alive():
+        _signal_group(process.pid, signal.SIGKILL)
         process.kill()
     process.join()
+    # A dead group leader still reaches lingering grandchildren with SIGKILL.
+    _signal_group(process.pid, signal.SIGKILL)
 
 
 def run_engine(
@@ -171,8 +215,8 @@ def run_engine(
     outcome says `timed_out` instead of raising, so the module runner
     decides what a timeout means for its task.
     """
-    if budget <= 0:
-        raise ValueError("`budget` must be positive.")
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("`budget` must be a positive, finite number of seconds.")
     spec = {
         "entry": entry,
         "args": list(args),
@@ -204,12 +248,23 @@ def run_engine(
                     f"(exit code {process.exitcode})."
                 )
                 break
-            if message["kind"] == "progress":
-                progress.emit(message["message"], channel=message["channel"])
-            elif message["kind"] == "result":
-                report = message["report"]
-            else:
-                error = f"{message['type']}: {message['message']}"
+            try:
+                kind = message["kind"]
+                if kind == "progress":
+                    # Delivery is advisory: a failing sink degrades progress
+                    # visibility, it never fails an otherwise-healthy run
+                    # (mirrors the child writer's swallow).
+                    try:
+                        progress.emit(message["message"], channel=message["channel"])
+                    except Exception:
+                        logger.exception("progress sink for %s raised", entry)
+                elif kind == "result":
+                    report = message["report"]
+                else:
+                    error = f"{message['type']}: {message['message']}"
+            except (KeyError, TypeError):
+                error = f"engine sent a malformed message: {message!r}"
+                break
     finally:
         _reap(process, grace)
         parent_conn.close()
