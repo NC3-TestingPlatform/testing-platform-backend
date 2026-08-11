@@ -95,6 +95,46 @@ def upgrade() -> None:
     )
     # The runtime has no business reading or writing migration state.
     op.execute("REVOKE ALL ON TABLE alembic_version FROM nc3_app")
+    # Direct grants and memberships are still not the whole story: a privilege
+    # granted to PUBLIC reaches every role, including nc3_app, and no REVOKE
+    # ... FROM nc3_app overrides it. Validate what nc3_app can *effectively*
+    # do and refuse if the matrix does not hold — same stance as the
+    # membership check: name the problem, leave cluster policy to the
+    # operator. PUBLIC grants none of these by default on PostgreSQL 15+
+    # (the stacks pin 18), so this only trips on out-of-band grants.
+    op.execute(
+        """
+        DO $$
+        DECLARE
+            offending text;
+        BEGIN
+            SELECT string_agg(check_name, ', ')
+            INTO offending
+            FROM (VALUES
+                ('statement_response UPDATE',
+                 has_table_privilege('nc3_app', 'statement_response', 'UPDATE')),
+                ('statement_response DELETE',
+                 has_table_privilege('nc3_app', 'statement_response', 'DELETE')),
+                ('audit_event UPDATE',
+                 has_table_privilege('nc3_app', 'audit_event', 'UPDATE')),
+                ('audit_event DELETE',
+                 has_table_privilege('nc3_app', 'audit_event', 'DELETE')),
+                ('alembic_version (any)',
+                 has_table_privilege('nc3_app', 'alembic_version',
+                     'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')),
+                ('schema public CREATE',
+                 has_schema_privilege('nc3_app', 'public', 'CREATE'))
+            ) AS t(check_name, held)
+            WHERE held;
+            IF offending IS NOT NULL THEN
+                RAISE EXCEPTION 'nc3_app still holds prohibited effective '
+                    'privileges (%) — likely granted to PUBLIC out of band; '
+                    'revoke them first (docs/database-roles.md)', offending;
+            END IF;
+        END
+        $$;
+        """
+    )
 
 
 def downgrade() -> None:

@@ -34,9 +34,12 @@ then re-asserts the role's attributes, so a pre-existing `nc3_app` cannot
 carry `BYPASSRLS` (or any other attribute) past the revision. It refuses to
 proceed while `nc3_app` holds any role membership: inherited privileges would
 bypass the grant matrix, and revoking cluster-level memberships some other
-database may rely on is the operator's call, not the migration's. A second
-database migrated in the same cluster reuses the existing role, and re-running
-the revision after a partial downgrade cannot collide.
+database may rely on is the operator's call, not the migration's. As a final
+gate it validates the role's *effective* privileges (`has_table_privilege`) —
+catching grants made to `PUBLIC` out of band, which reach every role and which
+no `REVOKE ... FROM nc3_app` overrides. A second database migrated in the same
+cluster reuses the existing role, and re-running the revision after a partial
+downgrade cannot collide.
 
 **No password appears in any migration.** The revision creates the role with
 `LOGIN` but no credential; each environment sets its own:
