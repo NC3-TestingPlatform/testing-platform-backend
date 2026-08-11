@@ -1,9 +1,12 @@
 """The Celery application.
 
-Pool and recycling policy follow the US #78 engine-integration ADR: prefork
-(native-heavy engine work must not share a thread's fate), a soft time limit the
-task can catch, a hard limit slightly above it so cleanup has room, and child
-recycling so leaked native memory dies with the process.
+Pool policy follows IDR-004 and the egress-queues ADR (Docmost — which
+supersede the earlier US #78 Taiga text): the IO-bound scan queues run gevent
+pools, file-analysis and platform run prefork. The time limits and child
+recycling configured here are prefork-pool semantics — they protect
+file-analysis and platform; gevent does not support them. On the scan queues,
+per-engine timeout enforcement is the module runner's subprocess timeout +
+kill (egress ADR), which lands with the B2b module contract.
 """
 
 from celery import Celery
@@ -12,9 +15,12 @@ from celery.signals import worker_init
 from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.worker.preflight import run_preflight
 
-# A task that overruns the soft limit gets SoftTimeLimitExceeded raised inside it
-# and may still write partial results; the hard limit, 30 seconds later, kills the
-# process outright. Keep the gap: a hard kill loses whatever the task was writing.
+# Prefork pools only (file-analysis, platform): a task that overruns the soft
+# limit gets SoftTimeLimitExceeded raised inside it and may still write partial
+# results; the hard limit, 30 seconds later, kills the process outright. Keep
+# the gap: a hard kill loses whatever the task was writing. The gevent scan
+# pools ignore these limits — their engines are bounded by the runner's
+# subprocess timeout instead.
 _SOFT_TIME_LIMIT = settings.scan_task_timeout_seconds
 _TIME_LIMIT = _SOFT_TIME_LIMIT + 30
 

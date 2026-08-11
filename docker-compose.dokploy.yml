@@ -131,14 +131,14 @@ services:
     build:
       context: .
       target: worker-non-intrusive-scan
-    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=non-intrusive-scan", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=non-intrusive-scan@%h"]
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=non-intrusive-scan", "--pool=gevent", "--concurrency=${CELERY_GEVENT_CONCURRENCY:-100}", "--hostname=non-intrusive-scan@%h"]
 
   worker-intrusive-scan:
     <<: *worker
     build:
       context: .
       target: worker-intrusive-scan
-    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=intrusive-scan", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=intrusive-scan@%h"]
+    command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=intrusive-scan", "--pool=gevent", "--concurrency=${CELERY_GEVENT_CONCURRENCY:-100}", "--hostname=intrusive-scan@%h"]
 
   worker-file-analysis:
     <<: *worker
