@@ -65,7 +65,10 @@ def normalize(report: Mapping[str, Any]) -> tuple[NormalizedFinding, ...]:
     surfaces both the summary verdict and the specific failure.
     """
     domain = report.get("domain", "")
-    status = str(report.get("status", "error"))
+    # Normalize once: map_status_severity is case- and space-insensitive, so the
+    # title lookup and check-id suffixes must use the same canonical value or a
+    # HIGH finding could read with the "error" title and a mixed-case check id.
+    status = str(report.get("status", "error")).strip().lower()
     findings: list[NormalizedFinding] = [
         NormalizedFinding(
             check_id=schema.CHECK_CHAIN,
@@ -83,7 +86,7 @@ def normalize(report: Mapping[str, Any]) -> tuple[NormalizedFinding, ...]:
     ]
 
     for link in report.get("chain", []):
-        link_status = str(link.get("status", "secure"))
+        link_status = str(link.get("status", "secure")).strip().lower()
         if link_status == "secure":
             continue
         zone = link.get("zone", "")
@@ -105,7 +108,7 @@ def normalize(report: Mapping[str, Any]) -> tuple[NormalizedFinding, ...]:
 
     leaf = report.get("leaf")
     if leaf is not None:
-        leaf_status = str(leaf.get("status", "secure"))
+        leaf_status = str(leaf.get("status", "secure")).strip().lower()
         if leaf_status != "secure":
             qname = leaf.get("qname", domain)
             findings.append(
@@ -130,14 +133,14 @@ def normalize(report: Mapping[str, Any]) -> tuple[NormalizedFinding, ...]:
 def summarize(report: Mapping[str, Any]) -> dict[str, Any]:
     """A small, render-ready aggregate of one DNSSECReport dict."""
     chain = report.get("chain", [])
+
+    def _status(item: Mapping[str, Any]) -> str:
+        return str(item.get("status", "")).strip().lower()
+
     return {
-        "status": report.get("status"),
-        "secure": report.get("status") == "secure",
+        "status": _status(report),
+        "secure": _status(report) == "secure",
         "zone_count": len(chain),
-        "insecure_delegations": sum(
-            1 for link in chain if link.get("status") == "insecure"
-        ),
-        "bogus_delegations": sum(
-            1 for link in chain if link.get("status") == "bogus"
-        ),
+        "insecure_delegations": sum(1 for link in chain if _status(link) == "insecure"),
+        "bogus_delegations": sum(1 for link in chain if _status(link) == "bogus"),
     }

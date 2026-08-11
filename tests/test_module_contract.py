@@ -15,6 +15,7 @@ import time
 from importlib.metadata import EntryPoint
 from pathlib import Path
 
+import conformance
 import pytest
 
 from nc3_testing_platform.core.enums import (
@@ -520,73 +521,26 @@ def test_core_never_imports_modules() -> None:
 
 # --- conformance suite ------------------------------------------------------
 #
-# The checks below are the contract every module must pass. They are plain
-# functions, not just parametrized tests, so a module that runs a real engine
-# offline (the dnssec exemplar, replaying recorded output) runs the *identical*
-# suite from its own test file — see tests/test_dnssec_module.py.
-
-
-def assert_conformance_protocol_and_descriptor(module: contract.TestModule) -> None:
-    """The module satisfies the protocol and declares platform vocabulary."""
-    assert isinstance(module, contract.TestModule)
-    descriptor = module.descriptor
-    assert isinstance(descriptor.name, ScanModule)
-    assert isinstance(descriptor.classification, ScanClassification)
-    assert descriptor.queue in contract.MODULE_QUEUES
-
-
-def assert_conformance_severity_hook_rejects_garbage(
-    module: contract.TestModule,
-) -> None:
-    """The hook refuses an input outside its vocabulary rather than guessing.
-
-    The *positive* mappings are module-specific — a VerdictSeverity-based
-    engine and chainvalidator's four-value status vocabulary map different
-    inputs — so each module asserts its own in its own test; the shared
-    guarantee is that garbage raises.
-    """
-    with pytest.raises(ValueError):
-        module.map_severity("definitely-not-a-severity")
-
-
-def assert_conformance_run_end_to_end(
-    module: contract.TestModule, scan_input: contract.ScanInput
-) -> None:
-    """One full run: child process, marshalled progress, normalized result.
-
-    The JSON round trip of `raw_output` is the marshalling test: the report
-    crossed the process boundary as plain data, not as a pickled object.
-    """
-    sink = _RecordingSink()
-    test_key = module.descriptor.tests[0].test_key
-    result = module.run(
-        scan_input, progress=contract.ProgressEmitter(test_key=test_key, sink=sink)
-    )
-    assert isinstance(result, contract.ModuleResult)
-    assert result.schema_version
-    assert json.loads(json.dumps(dict(result.raw_output))) == dict(result.raw_output)
-    assert result.findings
-    for finding in result.findings:
-        assert isinstance(finding.severity, FindingSeverity)
-        assert finding.check_id
-    assert sink.events, "a run must narrate at least one progress step"
+# The shared checks live in `tests/conformance.py` (a neutral module, not a
+# test module) so the dnssec exemplar can run the identical suite from its own
+# test file without importing from a collected test module.
 
 
 def test_noop_conformance_protocol_and_descriptor() -> None:
     """The noop reference passes the shared descriptor conformance check."""
-    assert_conformance_protocol_and_descriptor(noop.MODULE)
+    conformance.assert_protocol_and_descriptor(noop.MODULE)
 
 
 def test_noop_conformance_severity_hook() -> None:
     """The noop delegates to the 1:1 default, so it maps all five tiers."""
     for tier in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
         assert isinstance(noop.MODULE.map_severity(tier), FindingSeverity)
-    assert_conformance_severity_hook_rejects_garbage(noop.MODULE)
+    conformance.assert_severity_hook_rejects_garbage(noop.MODULE)
 
 
 def test_noop_conformance_run_end_to_end() -> None:
     """The noop reference passes the shared end-to-end conformance check."""
-    assert_conformance_run_end_to_end(
+    conformance.assert_run_end_to_end(
         noop.MODULE, contract.ScanInput(target_domain="example.com", timeout=2.0)
     )
 

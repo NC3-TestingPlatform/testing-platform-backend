@@ -7,6 +7,7 @@ in the worker process. The dict is then handed to `mapping` — the same shape
 the tests replay from recorded fixtures.
 """
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -28,6 +29,24 @@ DEFAULT_BUDGET = 60.0
 MAX_BUDGET = 120.0
 
 
+def _clamp_budget(raw: object) -> float:
+    """A caller-supplied ``options["budget"]`` coerced into a safe bound.
+
+    `options` is the launch request's JSONB verbatim, so the value is
+    untrusted: a non-number, a non-finite, or a non-positive budget falls
+    back to the default, and anything larger than ``MAX_BUDGET`` is capped —
+    the clamp bounds it on *both* sides so it can neither fail every scan
+    instantly nor pin a worker slot.
+    """
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_BUDGET
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_BUDGET
+    return min(value, MAX_BUDGET)
+
+
 def run_dnssec(
     scan_input: ScanInput,
     *,
@@ -43,7 +62,7 @@ def run_dnssec(
     """
     if scan_input.target_domain is None:
         raise ValueError("dnssec.chainvalidator scans a domain, not a file.")
-    budget = min(float(scan_input.options.get("budget", DEFAULT_BUDGET)), MAX_BUDGET)
+    budget = _clamp_budget(scan_input.options.get("budget", DEFAULT_BUDGET))
     outcome = run_engine(
         engine_entry,
         args=(scan_input.target_domain,),

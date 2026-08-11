@@ -5,25 +5,21 @@ fixtures under `tests/fixtures/dnssec/`, captured in the marshalled
 `asdict()` shape — so nothing here touches the network or needs the
 chainvalidator package installed. The contract conformance run uses the same
 recorded data through a replay engine, driven by the exact assertion helpers
-the noop passes in `test_module_contract.py`.
+in `tests/conformance.py` that the noop passes.
 """
 
 import json
 from pathlib import Path
 
+import conformance
 import dnssec_replay_engine
 import pytest
-from test_module_contract import (
-    assert_conformance_protocol_and_descriptor,
-    assert_conformance_run_end_to_end,
-    assert_conformance_severity_hook_rejects_garbage,
-)
 
 from nc3_testing_platform.core.enums import FindingSeverity, ScanModule
 from nc3_testing_platform.modules import registry
 from nc3_testing_platform.modules.contract import ProgressEmitter, ScanInput
 from nc3_testing_platform.modules.dnssec import MODULE as DNSSEC_MODULE
-from nc3_testing_platform.modules.dnssec import DnssecModule, mapping, schema
+from nc3_testing_platform.modules.dnssec import DnssecModule, mapping, runner, schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "dnssec"
 
@@ -124,6 +120,15 @@ def test_dnssec_is_discoverable_via_entry_points() -> None:
     assert roster.queue_for("dnssec.chainvalidator") == "non-intrusive-scan"
 
 
+def test_budget_clamp_bounds_both_sides() -> None:
+    """An untrusted options['budget'] is clamped, never passed through raw."""
+    assert runner._clamp_budget(1e9) == runner.MAX_BUDGET
+    assert runner._clamp_budget(30.0) == 30.0
+    # Non-positive, non-finite, and non-numeric all fall back to the default.
+    for bad in (0, -5, float("inf"), float("nan"), "sixty", None):
+        assert runner._clamp_budget(bad) == runner.DEFAULT_BUDGET
+
+
 def test_run_rejects_a_file_target() -> None:
     """The DNSSEC module scans a domain, not a file."""
     with pytest.raises(ValueError, match="domain"):
@@ -152,19 +157,19 @@ def replay_module(monkeypatch: pytest.MonkeyPatch) -> DnssecModule:
 
 def test_conformance_protocol_and_descriptor(replay_module: DnssecModule) -> None:
     """The dnssec module passes the shared descriptor conformance check."""
-    assert_conformance_protocol_and_descriptor(replay_module)
+    conformance.assert_protocol_and_descriptor(replay_module)
 
 
 def test_conformance_severity_hook(replay_module: DnssecModule) -> None:
     """It maps its own status vocabulary and rejects anything else."""
     for status in ("secure", "insecure", "bogus", "error"):
         assert isinstance(replay_module.map_severity(status), FindingSeverity)
-    assert_conformance_severity_hook_rejects_garbage(replay_module)
+    conformance.assert_severity_hook_rejects_garbage(replay_module)
 
 
 def test_conformance_run_end_to_end(replay_module: DnssecModule) -> None:
     """The full runner path passes the same end-to-end check the noop does."""
-    assert_conformance_run_end_to_end(
+    conformance.assert_run_end_to_end(
         replay_module, ScanInput(target_domain="example.com", timeout=2.0)
     )
 
