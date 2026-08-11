@@ -1,0 +1,35 @@
+{
+  "domain": "bogus-sig.example",
+  "record_type": "A",
+  "status": "bogus",
+  "trust_anchor_keys": ["DS=20326/SHA-256", "DS=38696/SHA-256"],
+  "chain": [
+    {
+      "zone": ".",
+      "parent_zone": "",
+      "status": "secure",
+      "ds_records": [],
+      "dnskeys": ["DNSKEY=20326/SEP"],
+      "ds_matched": ["DS=20326 -> DNSKEY=20326"],
+      "rrsig_used": 20326,
+      "errors": [],
+      "warnings": [],
+      "notes": []
+    },
+    {
+      "zone": "example.",
+      "parent_zone": ".",
+      "status": "bogus",
+      "ds_records": ["DS=11111/SHA-256"],
+      "dnskeys": ["DNSKEY=22222/SEP"],
+      "ds_matched": [],
+      "rrsig_used": null,
+      "errors": ["DS record does not match any DNSKEY; chain broken"],
+      "warnings": [],
+      "notes": []
+    }
+  ],
+  "leaf": null,
+  "errors": [],
+  "warnings": []
+}

@@ -27,6 +27,15 @@ export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 # add their own entry to this group in their own pyproject.toml.
 [project.entry-points."nc3_testing_platform.modules"]
 noop = "nc3_testing_platform.modules.noop:MODULE"
+dnssec = "nc3_testing_platform.modules.dnssec:MODULE"
+
+# Engines are external packages the worker images provision (B1); they are
+# not needed to install the platform, run the default test suite, or discover
+# a module's descriptor — only to actually execute a scan. Pin to a tag.
+[project.optional-dependencies]
+modules = [
+    "chainvalidator @ git+https://github.com/NC3-TestingPlatform/chainvalidator.git@v0.1.6",
+]
 
 [dependency-groups]
 dev = [
