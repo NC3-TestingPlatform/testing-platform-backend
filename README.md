@@ -115,3 +115,9 @@ api/
 docs/
   reference/           # reference documentation
 ```
+
+# License
+
+GPLv3 — see [LICENSE](LICENSE) for details. This matches the license used by
+every scan module in the [NC3-TestingPlatform](https://github.com/NC3-TestingPlatform)
+organisation.
