@@ -990,7 +990,7 @@ requires-dist = [
     { name = "chainvalidator", marker = "extra == 'modules'", git = "https://github.com/NC3-TestingPlatform/chainvalidator.git?rev=v0.1.6" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
     { name = "idna", specifier = ">=3.18" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
