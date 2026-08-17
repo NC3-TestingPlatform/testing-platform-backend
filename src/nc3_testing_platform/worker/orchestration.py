@@ -144,10 +144,20 @@ def plan_task_matrix(
                 )
                 continue
             declared = next(
-                test
-                for test in loaded.implementation.descriptor.tests
-                if test.test_key == entry.test_key
+                (
+                    test
+                    for test in loaded.implementation.descriptor.tests
+                    if test.test_key == entry.test_key
+                ),
+                None,
             )
+            if declared is None:
+                # Unreachable while by_test_key reads the same descriptor,
+                # but a bare StopIteration here would surface with no name.
+                raise ModuleRegistryError(
+                    f"entry point {loaded.entry_point!r} resolves "
+                    f"{entry.test_key!r} but does not declare it."
+                )
             specs.append(
                 TaskSpec(
                     test_key=entry.test_key,

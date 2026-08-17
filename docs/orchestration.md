@@ -8,7 +8,7 @@ egress-segregated task queues ADR, the Datastore-split ADR, and data-model
 
 ## The pipeline
 
-```
+```text
 launch (API)                 platform queue                  module queue
 ────────────                 ──────────────                  ────────────
 commit scan_job row ───────► scan.dispatch(job_id)

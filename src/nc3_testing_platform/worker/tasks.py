@@ -19,6 +19,11 @@ diagram's two holes: a job committed but never delivered (stranded publish)
 is re-published, and a job stuck `running` past its wall-clock budget is
 failed with the job-timeout reason — resolving to `partial` when usable
 results survived, which is the acceptance criterion made mechanical.
+
+Engine progress lines stay worker-local: the `ProgressEmitter` handed to a
+module carries no sink, so per-step narration goes to the worker log only.
+The SSE contract has no fine-grained progress event — the channel carries
+task/job state changes, heartbeats, and `end` (docs/orchestration.md).
 """
 
 import uuid
@@ -97,7 +102,12 @@ def dispatch(job_id: str) -> int:
     announce_running = False
     to_publish: list[tuple[uuid.UUID, str]] = []
     with session() as unit:
-        job = unit.get(ScanJob, job_uuid)
+        # FOR UPDATE: dispatch is redelivered by design (reaper republish),
+        # and two deliveries racing past the same status read would both
+        # create the matrix. The lock serializes the check-then-act.
+        job = unit.execute(
+            sa.select(ScanJob).where(ScanJob.id == job_uuid).with_for_update()
+        ).scalar_one_or_none()
         if job is None:
             logger.warning("scan.dispatch: job %s does not exist; dropping.", job_id)
             return 0
@@ -173,7 +183,11 @@ def run_module(task_id: str) -> str:
 
     # Phase 1 — claim the task and resolve its input; no engine work yet.
     with session() as unit:
-        task = unit.get(ScanTask, task_uuid)
+        # FOR UPDATE: a re-published task can be delivered twice; the lock
+        # makes the queued-status check a real claim, not a race.
+        task = unit.execute(
+            sa.select(ScanTask).where(ScanTask.id == task_uuid).with_for_update()
+        ).scalar_one_or_none()
         if task is None:
             logger.warning("scan.run_module: task %s does not exist.", task_id)
             return "missing"
@@ -267,7 +281,10 @@ def run_module(task_id: str) -> str:
     # Phase 3 — record exactly one outcome, then close the job if done.
     finished = _now()
     with session() as unit:
-        task = unit.get(ScanTask, task_uuid)
+        # FOR UPDATE again: the reaper may be closing this task concurrently.
+        task = unit.execute(
+            sa.select(ScanTask).where(ScanTask.id == task_uuid).with_for_update()
+        ).scalar_one_or_none()
         if task is None:
             logger.warning("scan.run_module: task %s vanished mid-run.", task_id)
             return "missing"
@@ -319,11 +336,28 @@ def reap() -> dict[str, int]:
     stale_before = now - timedelta(seconds=settings.scan_stale_after_seconds)
     timeout_before = now - timedelta(seconds=settings.scan_job_timeout_seconds)
     with session() as unit:
+        # Stranded covers both delivery holes: a job committed but never
+        # delivered (still `queued`), and a job whose dispatch died between
+        # committing `running` and publishing its children (still-`queued`
+        # tasks under a running job). Dispatch is idempotent for both.
+        undelivered_children = sa.exists().where(
+            ScanTask.scan_job_id == ScanJob.id,
+            ScanTask.status == ScanTaskStatus.QUEUED,
+            ScanTask.created_at < stale_before,
+        )
         stranded = (
             unit.execute(
                 sa.select(ScanJob.id).where(
-                    ScanJob.status == ScanJobStatus.QUEUED,
-                    ScanJob.created_at < stale_before,
+                    sa.or_(
+                        sa.and_(
+                            ScanJob.status == ScanJobStatus.QUEUED,
+                            ScanJob.created_at < stale_before,
+                        ),
+                        sa.and_(
+                            ScanJob.status == ScanJobStatus.RUNNING,
+                            undelivered_children,
+                        ),
+                    )
                 )
             )
             .scalars()
@@ -342,45 +376,57 @@ def reap() -> dict[str, int]:
     for job_id in stranded:
         app.send_task("scan.dispatch", args=(str(job_id),), queue="platform")
     for job_id in stuck:
-        swept = _now()
-        failed_tasks: list[uuid.UUID] = []
-        with session() as unit:
-            live_tasks = (
-                unit.execute(
-                    sa.select(ScanTask).where(
-                        ScanTask.scan_job_id == job_id,
-                        ScanTask.status.not_in(orchestration.TERMINAL_TASK_STATUSES),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for task in live_tasks:
-                orchestration.mark_task_terminal(
-                    task,
-                    ScanTaskStatus.FAILED,
-                    reason=orchestration.REASON_JOB_TIMEOUT,
-                    now=swept,
-                )
-                failed_tasks.append(task.id)
-            unit.commit()
-        for failed_id in failed_tasks:
-            # Best effort: pull an undelivered child off its queue. A child
-            # already executing keeps running until its own budget kill; its
-            # late result is rejected by the terminal-row guard.
-            try:
-                app.control.revoke(str(failed_id))
-            except Exception:
-                logger.exception("revoke of task %s failed", failed_id)
-            events.publish_task_event(
-                job_id,
-                task_id=failed_id,
-                status=ScanTaskStatus.FAILED,
-                status_reason=orchestration.REASON_JOB_TIMEOUT,
-                occurred_at=swept,
-            )
-        _finalize_and_publish(job_id, reason_override=orchestration.REASON_JOB_TIMEOUT)
+        # One misbehaving job must not abort the whole sweep: the remaining
+        # stuck jobs would then wait a full extra interval per failure.
+        try:
+            _reap_stuck_job(job_id)
+        except Exception:
+            logger.exception("reaping job %s failed; sweep continues", job_id)
     return {"republished": len(stranded), "timed_out": len(stuck)}
+
+
+def _reap_stuck_job(job_id: uuid.UUID) -> None:
+    """Fail one stuck job's live tasks and close it with the job-timeout reason."""
+    swept = _now()
+    failed_tasks: list[uuid.UUID] = []
+    with session() as unit:
+        live_tasks = (
+            unit.execute(
+                sa.select(ScanTask)
+                .where(
+                    ScanTask.scan_job_id == job_id,
+                    ScanTask.status.not_in(orchestration.TERMINAL_TASK_STATUSES),
+                )
+                .with_for_update()
+            )
+            .scalars()
+            .all()
+        )
+        for task in live_tasks:
+            orchestration.mark_task_terminal(
+                task,
+                ScanTaskStatus.FAILED,
+                reason=orchestration.REASON_JOB_TIMEOUT,
+                now=swept,
+            )
+            failed_tasks.append(task.id)
+        unit.commit()
+    for failed_id in failed_tasks:
+        # Best effort: pull an undelivered child off its queue. A child
+        # already executing keeps running until its own budget kill; its
+        # late result is rejected by the terminal-row guard.
+        try:
+            app.control.revoke(str(failed_id))
+        except Exception:
+            logger.exception("revoke of task %s failed", failed_id)
+        events.publish_task_event(
+            job_id,
+            task_id=failed_id,
+            status=ScanTaskStatus.FAILED,
+            status_reason=orchestration.REASON_JOB_TIMEOUT,
+            occurred_at=swept,
+        )
+    _finalize_and_publish(job_id, reason_override=orchestration.REASON_JOB_TIMEOUT)
 
 
 @app.task(name="scan.heartbeat")

@@ -131,6 +131,23 @@ class Settings(BaseSettings):
     scan_stale_after_seconds: int = Field(default=30, ge=1)
     scan_sweep_interval_seconds: int = Field(default=15, ge=1)
 
+    @model_validator(mode="after")
+    def _job_timeout_covers_the_task_limit(self) -> "Settings":
+        """The reaper must not fire before Celery's hard task limit.
+
+        The hard limit is the task timeout + 30 (worker/app.py); a job
+        timeout below that lets the sweep fail a task Celery would still
+        have let finish, so the misconfiguration is refused at startup.
+        """
+        floor = self.scan_task_timeout_seconds + 30
+        if self.scan_job_timeout_seconds < floor:
+            raise ValueError(
+                "SCAN_JOB_TIMEOUT_SECONDS must be at least "
+                f"SCAN_TASK_TIMEOUT_SECONDS + 30 ({floor}); got "
+                f"{self.scan_job_timeout_seconds}."
+            )
+        return self
+
     # The worker process's own egress queue (worker/app.py preflight). Empty
     # everywhere except in a worker container, where compose pins it; preflight
     # rejects a worker that cannot name its queue.

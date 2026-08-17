@@ -63,6 +63,17 @@ def test_out_of_bounds_value_refuses_to_start(clean_env: pytest.MonkeyPatch) -> 
         load_settings()
 
 
+def test_job_timeout_below_the_task_hard_limit_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """The reaper must not fire before Celery's hard task limit (timeout + 30)."""
+    clean_env.setenv("SCAN_JOB_TIMEOUT_SECONDS", "60")
+    with pytest.raises(RuntimeError, match="SCAN_JOB_TIMEOUT_SECONDS"):
+        load_settings()
+    clean_env.setenv("SCAN_JOB_TIMEOUT_SECONDS", "150")
+    assert load_settings().scan_job_timeout_seconds == 150
+
+
 def test_file_indirection_supplies_the_value(
     clean_env: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

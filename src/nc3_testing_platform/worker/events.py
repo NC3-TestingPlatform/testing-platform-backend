@@ -42,10 +42,22 @@ _client: Redis | None = None
 
 
 def get_client() -> Redis:
-    """The process-wide sync client, created lazily from ``settings.redis_url``."""
+    """The process-wide sync client, created lazily from ``settings.redis_url``.
+
+    Socket timeouts are what make the advisory rule real: without them a
+    half-open connection blocks the publish — and the worker slot — until
+    Celery's hard limit, so a Redis incident would degrade scan throughput
+    instead of just costing events.
+    """
     global _client
     if _client is None:
-        _client = Redis.from_url(settings.redis_url, decode_responses=True)
+        _client = Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2.0,
+            socket_timeout=2.0,
+            health_check_interval=30,
+        )
     return _client
 
 

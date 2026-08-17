@@ -24,13 +24,13 @@ from datetime import UTC, datetime, timedelta
 from uuid6 import uuid7
 
 from nc3_testing_platform.core.enums import (
-    ScanClassification,
     ScanJobStatus,
     ScanModule,
     ScanSource,
     ScanTaskStatus,
 )
 from nc3_testing_platform.domains.scans.models import ScanJob, ScanTask
+from nc3_testing_platform.modules.registry import discover
 from nc3_testing_platform.worker.app import app
 from nc3_testing_platform.worker.db import session
 
@@ -40,6 +40,10 @@ def main() -> None:
     domain = os.environ.get("SCAN_DOMAIN") or (
         sys.argv[1] if len(sys.argv) > 1 else "example.com"
     )
+    # The task copies its metadata from the noop's declaration, exactly as
+    # plan_task_matrix would — hardcoding the version here would drift.
+    noop = discover().by_test_key("web.noop").implementation.descriptor
+    declared = next(test for test in noop.tests if test.test_key == "web.noop")
     now = datetime.now(UTC)
     job_id = uuid7()
     # A real guest launch returns the plaintext once and stores only the
@@ -62,10 +66,10 @@ def main() -> None:
             ScanTask(
                 id=uuid7(),
                 scan_job_id=job_id,
-                module=ScanModule.WEB,
-                test_key="web.noop",
-                test_version="1.0.0",
-                classification=ScanClassification.NON_INTRUSIVE,
+                module=noop.name,
+                test_key=declared.test_key,
+                test_version=declared.test_version,
+                classification=noop.classification,
                 target_domain=domain,
                 status=ScanTaskStatus.QUEUED,
             )

@@ -21,11 +21,13 @@ migrate:
 	docker compose exec -T api alembic upgrade head
 
 # make scan DOMAIN=example.com  (requires `make migrate` once per fresh stack)
-# The domain travels as an environment value and Python passes it on as data,
-# so no shell ever interpolates it into a command line.
+# The domain travels as an environment value expanded by the recipe shell
+# ($$DOMAIN), never by make: a make-time $(DOMAIN) expansion would splice the
+# value into the command line before any quoting applies.
 DOMAIN ?= example.com
+export DOMAIN
 scan:
-	docker compose exec -T -e SCAN_DOMAIN="$(DOMAIN)" worker-platform \
+	docker compose exec -T -e SCAN_DOMAIN="$${DOMAIN}" worker-platform \
 		python -m nc3_testing_platform.tools.seed_scan
 
 # Database migrations (docs/database-migrations.md).
