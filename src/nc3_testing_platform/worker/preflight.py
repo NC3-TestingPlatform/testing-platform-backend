@@ -49,7 +49,7 @@ MINIMUM_VERSIONS: dict[str, tuple[int, int]] = {
 REQUIRED_ENGINES: dict[str, tuple[tuple[str, str], ...]] = {
     "non-intrusive-scan": (
         ("chainvalidator", "0.1.6"),
-        ("quantumvalidator", "0.6.4"),
+        ("quantumvalidator", "0.7.0"),
     ),
     "intrusive-scan": (),
     "file-analysis": (),

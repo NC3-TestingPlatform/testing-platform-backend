@@ -74,8 +74,12 @@ def test_mapping_safe_report_is_one_info_finding() -> None:
     assert summary["failed_checks"] == 0
 
 
-def test_mapping_unsafe_report_flags_the_failed_key_exchange() -> None:
-    """A classical-only host surfaces the verdict and the failed check."""
+def test_mapping_unsafe_report_flags_each_failed_check() -> None:
+    """A classical-only host surfaces the verdict and every failed check.
+
+    The recorded host misses the PQC hybrid group *and* serves an RSA-2048
+    certificate, so the v0.7.0 PQC-02 check contributes a second finding.
+    """
     findings = mapping.normalize(_report("unsafe_tls"))
     by_check = {f.check_id: f for f in findings}
     assert by_check[schema.CHECK_READINESS].severity is FindingSeverity.MEDIUM
@@ -83,16 +87,26 @@ def test_mapping_unsafe_report_flags_the_failed_key_exchange() -> None:
     assert failed.severity is FindingSeverity.MEDIUM
     assert failed.evidence is not None
     assert "standard" in failed.evidence
+    certificate = by_check[f"{schema.CHECK_PREFIX}.certificate_key"]
+    assert certificate.severity is FindingSeverity.MEDIUM
+    assert certificate.evidence is not None
+    assert certificate.evidence["value"] == "RSA-2048"
     summary = mapping.summarize(_report("unsafe_tls"))
     assert summary["safe"] is False
-    assert summary["failed_checks"] == 1
+    assert summary["failed_checks"] == 2
 
 
-def test_mapping_ssh_report_names_the_kex_algorithm_gap() -> None:
-    """An SSH probe maps like any other: the non-PQC KEX becomes a finding."""
+def test_mapping_ssh_report_names_the_kex_and_host_key_gaps() -> None:
+    """An SSH probe maps like any other: KEX and host-key gaps become findings.
+
+    The recorded server still advertises `ssh-rsa`, so the v0.7.0 PQC-03
+    check contributes a finding beside the non-PQC KEX one.
+    """
     findings = mapping.normalize(_report("ssh"))
     by_check = {f.check_id: f for f in findings}
     assert f"{schema.CHECK_PREFIX}.kex_algorithm" in by_check
+    host_keys = by_check[f"{schema.CHECK_PREFIX}.host_key_algorithms"]
+    assert host_keys.severity is FindingSeverity.MEDIUM
     summary = mapping.summarize(_report("ssh"))
     assert summary["tls_version"] == "SSHv2"
     assert summary["port"] == 22
