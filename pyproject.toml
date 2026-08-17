@@ -30,6 +30,7 @@ export-openapi = "nc3_testing_platform.tools.export_openapi:main"
 [project.entry-points."nc3_testing_platform.modules"]
 noop = "nc3_testing_platform.modules.noop:MODULE"
 dnssec = "nc3_testing_platform.modules.dnssec:MODULE"
+pqc = "nc3_testing_platform.modules.pqc:MODULE"
 
 # Engines are external packages the worker images provision (B1); they are
 # not needed to install the platform, run the default test suite, or discover
@@ -37,6 +38,7 @@ dnssec = "nc3_testing_platform.modules.dnssec:MODULE"
 [project.optional-dependencies]
 modules = [
     "chainvalidator @ git+https://github.com/NC3-TestingPlatform/chainvalidator.git@v0.1.6",
+    "quantumvalidator @ git+https://github.com/NC3-TestingPlatform/quantumvalidator.git@v0.6.4",
 ]
 
 [dependency-groups]

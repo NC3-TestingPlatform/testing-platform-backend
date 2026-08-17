@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "name": "connection",
+      "reason": "Connection timed out after 3.0s",
+      "standard": null,
+      "status": "ERROR",
+      "value": null
+    }
+  ],
+  "detected_starttls": null,
+  "negotiated_group": null,
+  "port": 443,
+  "target": "192.0.2.1",
+  "tls_version": null,
+  "verdict": "UNSAFE"
+}
