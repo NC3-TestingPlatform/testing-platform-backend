@@ -155,9 +155,10 @@ options' `budget` key. A wrong image build surfaces before any scan:
 `worker/preflight.py` checks each engine distribution and its exact version
 at worker start (`make logs`).
 
-The same procedure verifies the PQC module: `make scan DOMAIN=cloudflare.com
-MODULE=pqc` (expect `pqc.readiness` INFO with `negotiated_group:
-X25519MLKEM768`), and a classical-only host yields `pqc.readiness` +
-`pqc.check.key_exchange`, both MEDIUM. Its budget clamp is 30 s default /
+The same procedure verifies the PQC module with
+`make scan DOMAIN=cloudflare.com MODULE=pqc`
+(expect `pqc.readiness` INFO with `negotiated_group: X25519MLKEM768`), and a
+classical-only host yields `pqc.readiness` + `pqc.check.key_exchange`, both
+MEDIUM. Its budget clamp is 30 s default /
 60 s max, and the launch options' `port` key points the probe at another
 service (the engine fingerprints STARTTLS and SSH from the banner).

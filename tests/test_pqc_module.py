@@ -165,7 +165,7 @@ def test_budget_clamp_bounds_both_sides() -> None:
     """An untrusted options['budget'] is clamped, never passed through raw."""
     assert runner._clamp_budget(1e9) == runner.MAX_BUDGET
     assert runner._clamp_budget(15.0) == 15.0
-    for bad in (0, -5, float("inf"), float("nan"), "thirty", None):
+    for bad in (0, -5, float("inf"), float("nan"), "thirty", None, True, False):
         assert runner._clamp_budget(bad) == runner.DEFAULT_BUDGET
 
 
@@ -173,7 +173,9 @@ def test_port_clamp_accepts_only_valid_tcp_ports() -> None:
     """An untrusted options['port'] is a real port or the engine default."""
     assert runner._clamp_port(22) == 22
     assert runner._clamp_port("8443") == 8443
-    for bad in (0, -1, 65536, "https", None):
+    assert runner._clamp_port(443.0) == 443
+    bad_ports = (0, -1, 65536, "https", None, True, False, 1.9, float("inf"), float("nan"))
+    for bad in bad_ports:
         assert runner._clamp_port(bad) is None
 
 

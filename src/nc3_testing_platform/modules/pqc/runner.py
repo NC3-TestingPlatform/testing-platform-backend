@@ -36,8 +36,11 @@ def _clamp_budget(raw: object) -> float:
     untrusted: a non-number, a non-finite, or a non-positive budget falls
     back to the default, and anything larger than ``MAX_BUDGET`` is capped —
     the clamp bounds it on *both* sides so it can neither fail every scan
-    instantly nor pin a worker slot.
+    instantly nor pin a worker slot. Booleans are JSON scalars too and would
+    coerce to 0.0/1.0, so they fall back explicitly.
     """
+    if isinstance(raw, bool):
+        return DEFAULT_BUDGET
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -52,15 +55,21 @@ def _clamp_port(raw: object) -> int | None:
 
     Anything that is not a whole number in 1–65535 falls back to ``None`` —
     the engine's own default (443) — mirroring `_clamp_budget`'s
-    silent-fallback treatment of untrusted launch options.
+    silent-fallback treatment of untrusted launch options. Booleans and
+    fractional numbers are rejected rather than truncated to port 1.
     """
+    if isinstance(raw, bool):
+        return None
     try:
-        value = int(raw)  # type: ignore[call-overload]
+        value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    if not 1 <= value <= 65535:
+    if not math.isfinite(value) or not value.is_integer():
         return None
-    return value
+    port = int(value)
+    if not 1 <= port <= 65535:
+        return None
+    return port
 
 
 def run_pqc(
