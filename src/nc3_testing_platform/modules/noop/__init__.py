@@ -26,9 +26,9 @@ from nc3_testing_platform.modules.contract import (
     ProgressEmitter,
     ScanInput,
     TestDeclaration,
-    map_engine_severity,
 )
 from nc3_testing_platform.modules.execution import run_engine
+from nc3_testing_platform.modules.normalization.severity import map_engine_severity
 
 SCHEMA_VERSION = "noop/1.0"
 

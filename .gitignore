@@ -12,6 +12,16 @@ venv.bak/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 
+# Test and coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+
 # IDE
 .idea/
-.vscode/.claude/
+.vscode/
+
+# Agent workspace (plans, reviews) — local only
+.claude/

@@ -172,12 +172,26 @@ lean on Celery time limits for engine bounds; they are a backstop only.
 Severity mapping stays an explicit per-module hook,
 `TestModule.map_severity(engine_severity) -> FindingSeverity`. The engines'
 five-tier `VerdictSeverity` (CRITICAL…INFO) happens to map 1:1 onto
-`FindingSeverity`, and `contract.map_engine_severity` implements that
-default — but the 1:1 is an observation about today's engines, not a law.
-A module that must re-rank overrides the hook; everyone else delegates.
-Unknown severities raise instead of guessing. Full per-module `check_id`
-catalogues and any non-1:1 mapping tables belong to the M* stories and the
-B2c normalization layer, not here.
+`FindingSeverity`, and `contract.map_engine_severity` is that default — but
+the 1:1 is an observation about today's engines, not a law. A module that
+must re-rank overrides the hook; everyone else delegates. Unknown severities
+raise instead of guessing.
+
+**The hook's owner is no longer this file.** IDR-018 (US #77, B2c) makes
+`modules.normalization` the single owner of engine→platform mapping, and
+`contract.map_engine_severity` is now a re-export of
+`normalization.severity.map_engine_severity` — same name, same behaviour, one
+definition. A module whose engine speaks something other than
+`VerdictSeverity` no longer writes its own lookup either: it **declares an
+`EngineVocabulary` table** and points the hook at it, so the platform keeps
+ownership of canonicalization and of the raise-on-unknown policy. The DNSSEC
+module's four-value chainvalidator status is the worked example.
+
+The same layer owns the three finding-level rules that span modules —
+`check_id` vocabulary, `severity_counts`, and the deterministic persistence
+order — plus the pure `ModuleResult` → row mappers. See
+[`normalization.md`](normalization.md). Per-module `check_id` catalogues
+remain each M* story's own.
 
 ## 5. Progress protocol
 
@@ -241,7 +255,10 @@ declaration gates, user cancellation — never module decisions.
    packages, pinned in the `modules` optional-dependency extra; worker
    images provision them (B1).
 4. Normalize: keep the marshalled report as `raw_output`, derive `findings`
-   with stable `check_id`s, map severities through your hook.
+   with stable `check_id`s, map severities through your hook. If your engine
+   does not speak `VerdictSeverity`, declare an `EngineVocabulary` in
+   `modules/normalization/severity.py` and point the hook at it — never write
+   your own lookup (IDR-018; see [`normalization.md`](normalization.md)).
 5. Register the entry point in `pyproject.toml`.
 6. Test against **recorded engine output** — capture the marshalled report
    dict once as a fixture; mapping tests must not touch the network. Add
@@ -269,11 +286,13 @@ files, one per contract concern:
 - **`mapping.py`** — `normalize()` turns the marshalled `DNSSECReport` dict
   into `NormalizedFinding`s: one overall `dnssec.chain_of_trust`, plus one
   per non-secure delegation (`dnssec.delegation.<status>` keyed on the zone)
-  and a non-secure leaf. `map_status_severity()` is the module's **own**
-  severity table — chainvalidator reports `secure`/`insecure`/`bogus`/
-  `error`, not the `VerdictSeverity` tiers, so this module overrides the hook
-  rather than delegating to the 1:1 default (bogus → HIGH, insecure →
-  MEDIUM, error → LOW, secure → INFO).
+  and a non-secure leaf. `map_status_severity()` overrides the hook rather
+  than delegating to the 1:1 default — chainvalidator reports
+  `secure`/`insecure`/`bogus`/`error`, not the `VerdictSeverity` tiers — and
+  resolves it through the `chainvalidator-status` `EngineVocabulary` declared
+  in the normalization layer (bogus → HIGH, insecure → MEDIUM, error → LOW,
+  secure → INFO). The module owns what a status *means*; the platform owns how
+  a value is matched and what an unmapped one does.
 - **`__init__.py`** — the frozen `DnssecModule` tying descriptor + `run()` +
   `map_severity()` together, and `MODULE`, the object the entry point
   resolves to.
