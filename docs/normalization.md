@@ -147,18 +147,23 @@ All five bands are always present, zeros included — matching the
 "this module does not report criticals".
 
 **Deterministic ordering.** Severity descending, then `check_id`, then
-`affected_resource`, then `title`. A re-run of an unchanged scan therefore
-produces byte-identical rows in an identical sequence, so a diff between two
-results is a real change rather than engine iteration order.
+`affected_resource`, then `title`, then the remaining persisted fields
+(`description`, `remediation`, canonical-JSON `evidence`,
+`external_references`). A re-run of an unchanged scan therefore produces
+byte-identical rows in an identical sequence, so a diff between two results is
+a real change rather than engine iteration order.
 
-`title` is the last key rather than a decoration. `check_id` and
-`affected_resource` are what regression matching keys on, but one rule may
-legitimately raise several findings about the same resource — two distinct
-warnings on the same zone. Without a fourth key those tie, and Python's stable
-sort would fall back to input order, which *is* engine iteration order: exactly
-what this function exists to remove. The key is a plain `(int, str, str, str)`
-tuple — nothing hash-derived — so the order reproduces across processes and
-`PYTHONHASHSEED` values.
+The tail of the key exists because the order must be **total over persisted
+content**. `check_id` and `affected_resource` are what regression matching
+keys on, but one rule may legitimately raise several findings about the same
+resource — and two findings can even share a title while differing in evidence.
+Any tie left in the key makes Python's stable sort fall back to input order,
+which *is* engine iteration order: exactly what this function exists to remove.
+Findings identical in every persisted field are interchangeable for ordering by
+definition. `evidence` enters the key as canonical JSON (`sort_keys=True`), so
+two dicts differing only in insertion order do not order differently. The key
+is plain `int`/`str` throughout — nothing hash-derived — so the order
+reproduces across processes and `PYTHONHASHSEED` values.
 
 The severity ranking is written out explicitly rather than derived from the
 enum's declaration order, which is incidental to how the enum is declared and
@@ -218,7 +223,7 @@ because a top-level-only check passes against a shallow copy and proves nothing.
 Running `tests/fixtures/dnssec/insecure.json` (an unsigned `example.`
 delegation) through the module and then the mappers:
 
-```
+```text
 summary          {"status": "insecure", "secure": false, "zone_count": 2,
                   "insecure_delegations": 1, "bogus_delegations": 0}
 severity_counts  {"critical": 0, "high": 0, "medium": 3, "low": 0, "info": 0}

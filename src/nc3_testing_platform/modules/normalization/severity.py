@@ -68,6 +68,15 @@ class EngineVocabulary:
             raise ValueError(f"engine vocabulary {self.name!r} declares no values.")
         canonical: dict[str, FindingSeverity] = {}
         for value, severity in self.table.items():
+            # `FindingSeverity` is a StrEnum, so a bare "high" slips past a
+            # static check at any untyped call site and would then leak out of
+            # `map_severity` as a plain str — whose `.value` access fails far
+            # from the declaration. Reject it here, at import time.
+            if not isinstance(severity, FindingSeverity):
+                raise ValueError(
+                    f"engine vocabulary {self.name!r} maps {value!r} to "
+                    f"{severity!r}, which is not a FindingSeverity member."
+                )
             key = _canonical(value)
             if not key:
                 raise ValueError(

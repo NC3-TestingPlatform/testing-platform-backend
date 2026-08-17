@@ -16,6 +16,7 @@ a statement about how *all* findings compare with one another:
   two results is a real change rather than engine iteration order.
 """
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
@@ -86,40 +87,52 @@ def severity_counts(findings: Iterable[NormalizedFinding]) -> dict[str, int]:
     return counts
 
 
+def _order_key(finding: NormalizedFinding) -> tuple[int, str, str, str, str, str, str, str]:
+    """The total persistence-order key over every persisted finding field.
+
+    `severity`/`check_id`/`affected_resource` are the identity regression
+    matching keys on (§8.2); `title` breaks the tie when one rule raises
+    several findings about the same resource. The remaining fields exist
+    because the order must be *total* over persisted content: two findings can
+    match on all four identity keys and still differ in `description`,
+    `remediation`, `evidence`, or `external_references`, and a stable sort
+    would then fall back to input order — engine iteration order, the
+    non-determinism this module exists to remove.
+
+    `evidence` enters as canonical JSON (`sort_keys=True`, no whitespace
+    variance): the contract guarantees it is a JSON-shaped plain tree, and
+    canonicalizing keeps two dicts that differ only in insertion order from
+    ordering differently. ``None`` and ``{}`` stay distinct (``""`` vs
+    ``"{}"``), mirroring the row mapping. Everything in the key is a plain
+    `int`/`str` — no set or dict iteration, nothing hash-derived — so the
+    order reproduces across processes and `PYTHONHASHSEED` values.
+    """
+    return (
+        _SEVERITY_RANK[finding.severity],
+        finding.check_id,
+        finding.affected_resource or "",
+        finding.title,
+        finding.description,
+        finding.remediation or "",
+        "" if finding.evidence is None else json.dumps(finding.evidence, sort_keys=True),
+        json.dumps(list(finding.external_references)),
+    )
+
+
 def order_findings(
     findings: Iterable[NormalizedFinding],
 ) -> tuple[NormalizedFinding, ...]:
-    """Findings in persistence order: severity desc, `check_id`, resource, title.
+    """Findings in persistence order — a total order over persisted content.
 
-    Ordering is stable no matter what order the engine produced them in.
-    `affected_resource` is optional; a finding without one sorts before its
-    siblings that have one, which is arbitrary but fixed — what matters is that
-    it never varies between runs.
-
-    `title` is the last key rather than a decoration. `check_id` and
-    `affected_resource` are what regression matching keys on (§8.2), but one
-    rule may legitimately raise several findings about the same resource — two
-    distinct warnings on the same zone. Without a fourth key those tie, and
-    Python's stable sort would then fall back to input order, which is engine
-    iteration order: exactly the non-determinism this function exists to
-    remove. Findings identical in all four are interchangeable for ordering by
-    definition.
-
-    The key is a plain `(int, str, str, str)` tuple — no set or dict iteration,
-    nothing hash-derived — so the order is reproducible across processes and
-    `PYTHONHASHSEED` values.
+    Severity descending, then `check_id`, then `affected_resource`, then
+    `title`, then the remaining persisted fields (see :func:`_order_key`), so
+    the ordering never depends on the order the engine produced them in.
+    Findings identical in *every* persisted field are interchangeable for
+    ordering by definition. `affected_resource` is optional; a finding without
+    one sorts before its siblings that have one, which is arbitrary but fixed —
+    what matters is that it never varies between runs.
 
     :param findings: The normalized findings of one result, in any order.
     :return: The same findings, sorted. The input is not mutated.
     """
-    return tuple(
-        sorted(
-            findings,
-            key=lambda finding: (
-                _SEVERITY_RANK[finding.severity],
-                finding.check_id,
-                finding.affected_resource or "",
-                finding.title,
-            ),
-        )
-    )
+    return tuple(sorted(findings, key=_order_key))

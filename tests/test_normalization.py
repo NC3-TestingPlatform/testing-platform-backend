@@ -114,6 +114,19 @@ def test_vocabulary_rejects_an_empty_declared_value() -> None:
         )
 
 
+def test_vocabulary_rejects_a_value_that_is_not_a_platform_severity() -> None:
+    """`FindingSeverity` is a StrEnum, so a bare `"high"` passes `==` checks.
+
+    It would leak out of `map_severity` as a plain str whose `.value` access
+    fails far from the declaration — reject it at construction instead.
+    """
+    with pytest.raises(ValueError, match="not a FindingSeverity member"):
+        severity_rules.EngineVocabulary(
+            name="stringly-engine",
+            table={"broken": "high"},  # type: ignore[dict-item]
+        )
+
+
 def test_vocabulary_rejects_two_keys_that_fold_together() -> None:
     """Case-blind matching makes `High` and ` high ` one key, not last-one-wins."""
     with pytest.raises(ValueError, match="twice"):
@@ -291,6 +304,36 @@ def test_findings_tied_on_rule_and_resource_are_ordered_by_title() -> None:
         "Zone serial is stale",
     ]
     assert forwards == backwards
+
+
+def test_findings_tied_on_all_identity_keys_are_ordered_by_content() -> None:
+    """The order is total over persisted content, not just the identity keys.
+
+    Two findings can match on severity, `check_id`, `affected_resource` *and*
+    `title` while carrying different evidence; without content tie-breakers a
+    stable sort preserves input order — engine iteration order — and the
+    produced rows differ across unchanged runs.
+    """
+    tied = (
+        _finding("dnssec.zone", FindingSeverity.LOW, affected_resource="example.",
+                 title="Weak key", evidence={"dnskey": "20326"}),
+        _finding("dnssec.zone", FindingSeverity.LOW, affected_resource="example.",
+                 title="Weak key", evidence={"dnskey": "10123"}),
+    )
+    forwards = finding_rules.order_findings(tied)
+    backwards = finding_rules.order_findings(tuple(reversed(tied)))
+    assert forwards == backwards
+    assert [item.evidence for item in forwards] == [
+        {"dnskey": "10123"},
+        {"dnskey": "20326"},
+    ]
+
+
+def test_evidence_key_insertion_order_does_not_reorder_findings() -> None:
+    """Evidence enters the key as canonical JSON, so dict order is irrelevant."""
+    left = _finding(evidence={"a": 1, "b": 2})
+    right = _finding(evidence={"b": 2, "a": 1})
+    assert finding_rules._order_key(left) == finding_rules._order_key(right)
 
 
 def test_ordering_is_stable_under_a_reversed_input() -> None:
