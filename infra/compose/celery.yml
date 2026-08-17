@@ -139,9 +139,9 @@ services:
 
   beat:
     <<: *worker
-    # Scheduled dispatch and the enqueue reaper, on the platform image. The
-    # schedule is empty until those periodic tasks land in worker/app.py; until
-    # then beat idles, proving only the wiring and the schedule volume.
+    # The reaper and heartbeat sweeps (worker/app.py beat_schedule, B8): the
+    # reaper re-publishes stranded jobs and fails jobs stuck past
+    # SCAN_JOB_TIMEOUT_SECONDS; the heartbeat keeps live SSE streams honest.
     # Exactly one replica: a second beat double-publishes every periodic task.
     # No healthcheck: beat exposes no control queue to ping.
     image: nc3-testing-platform-worker-platform:local

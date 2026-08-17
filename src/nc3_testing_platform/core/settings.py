@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     scan_task_timeout_seconds: int = Field(default=120, ge=1)
     celery_max_tasks_per_child: int = Field(default=100, ge=1)
 
+    # Job-level lifecycle sweeps (worker/tasks.py, B8 / US #84). The compose
+    # stack has exported these since the queue topology landed; the reaper and
+    # heartbeat tasks are their first consumers. `scan_job_timeout_seconds`
+    # bounds a whole job (all its tasks), so it sits above the per-task limit;
+    # `scan_stale_after_seconds` is how long a job may sit `queued` before the
+    # reaper re-publishes it as stranded.
+    scan_job_timeout_seconds: int = Field(default=900, ge=1)
+    scan_heartbeat_interval_seconds: int = Field(default=5, ge=1)
+    scan_stale_after_seconds: int = Field(default=30, ge=1)
+    scan_sweep_interval_seconds: int = Field(default=15, ge=1)
+
     # The worker process's own egress queue (worker/app.py preflight). Empty
     # everywhere except in a worker container, where compose pins it; preflight
     # rejects a worker that cannot name its queue.

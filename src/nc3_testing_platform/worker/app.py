@@ -34,10 +34,26 @@ app = Celery(
 app.conf.update(
     # Routing is by task name and owned here. The queues are the egress profiles;
     # the worker consuming each is pinned to it in infra/compose/celery.yml.
+    # `scan.run_module`'s row is a default only: dispatch overrides the queue
+    # per send from the module's declaration (`Roster.queue_for`), because one
+    # task name serves all three module queues and a static route cannot.
     task_routes={
         "scan.dispatch": {"queue": "platform"},
-        "scan.persist": {"queue": "platform"},
         "scan.run_module": {"queue": "non-intrusive-scan"},
+        "scan.reap": {"queue": "platform"},
+        "scan.heartbeat": {"queue": "platform"},
+    },
+    # The reaper and heartbeat sweeps (B8 / US #84); beat runs on the platform
+    # image with exactly one replica (infra/compose/celery.yml).
+    beat_schedule={
+        "scan-reap": {
+            "task": "scan.reap",
+            "schedule": settings.scan_sweep_interval_seconds,
+        },
+        "scan-heartbeat": {
+            "task": "scan.heartbeat",
+            "schedule": settings.scan_heartbeat_interval_seconds,
+        },
     },
     # A task someone adds without a route must land on a queue a worker
     # consumes, not on Celery's built-in default that nothing reads.

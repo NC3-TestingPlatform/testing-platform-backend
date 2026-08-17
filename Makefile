@@ -1,4 +1,4 @@
-.PHONY: dev export-openapi lint typecheck test up down logs scan db-upgrade db-downgrade db-revision db-check db-current db-history
+.PHONY: dev export-openapi lint typecheck test up down logs migrate scan db-upgrade db-downgrade db-revision db-check db-current db-history
 
 # The host-run API reads .env when present, matching what Compose gives the containers.
 dev:
@@ -15,13 +15,18 @@ down:
 logs:
 	docker compose logs -f
 
-# make scan DOMAIN=example.com
+# Apply migrations inside the running stack; the scan tables must exist
+# before `make scan` seeds a job (the api image carries alembic + migrations/).
+migrate:
+	docker compose exec -T api alembic upgrade head
+
+# make scan DOMAIN=example.com  (requires `make migrate` once per fresh stack)
 # The domain travels as an environment value and Python passes it on as data,
 # so no shell ever interpolates it into a command line.
 DOMAIN ?= example.com
 scan:
 	docker compose exec -T -e SCAN_DOMAIN="$(DOMAIN)" worker-platform \
-		python -c 'import os; from nc3_testing_platform.worker.tasks import dispatch; print(dispatch.delay(os.environ["SCAN_DOMAIN"]).id)'
+		python -m nc3_testing_platform.tools.seed_scan
 
 # Database migrations (docs/database-migrations.md).
 # migrations/env.py refuses to run without DATABASE_URL (a downgrade against a
