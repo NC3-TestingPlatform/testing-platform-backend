@@ -147,12 +147,22 @@ All five bands are always present, zeros included — matching the
 "this module does not report criticals".
 
 **Deterministic ordering.** Severity descending, then `check_id`, then
-`affected_resource`. A re-run of an unchanged scan therefore produces
-byte-identical rows in an identical sequence, so a diff between two results is a
-real change rather than engine iteration order. The severity ranking is written
-out explicitly rather than derived from the enum's declaration order, which is
-incidental to how the enum is declared and would silently re-sort every stored
-result if a member were ever moved.
+`affected_resource`, then `title`. A re-run of an unchanged scan therefore
+produces byte-identical rows in an identical sequence, so a diff between two
+results is a real change rather than engine iteration order.
+
+`title` is the last key rather than a decoration. `check_id` and
+`affected_resource` are what regression matching keys on, but one rule may
+legitimately raise several findings about the same resource — two distinct
+warnings on the same zone. Without a fourth key those tie, and Python's stable
+sort would fall back to input order, which *is* engine iteration order: exactly
+what this function exists to remove. The key is a plain `(int, str, str, str)`
+tuple — nothing hash-derived — so the order reproduces across processes and
+`PYTHONHASHSEED` values.
+
+The severity ranking is written out explicitly rather than derived from the
+enum's declaration order, which is incidental to how the enum is declared and
+would silently re-sort every stored result if a member were ever moved.
 
 ## 4. Rows — the last step before the database, and not the database step
 

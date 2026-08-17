@@ -19,7 +19,7 @@ This module imports platform vocabulary only. It must not import
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from nc3_testing_platform.core.enums import FindingSeverity
@@ -49,10 +49,17 @@ class EngineVocabulary:
     :param table: Engine value → platform severity. Keys are matched case- and
         space-insensitively, so two keys that fold together are a declaration
         error, not a silent last-one-wins.
+
+    A vocabulary is identified by its `name` — that is the key `VOCABULARIES`
+    registers it under, and names are unique. `table` is therefore excluded
+    from equality and hashing: `frozen=True` advertises that instances are
+    usable as dict keys and set members, but the auto-generated `__hash__`
+    would include the `MappingProxyType` and raise `TypeError` on every call.
+    Excluding it keeps the promise the decorator makes.
     """
 
     name: str
-    table: Mapping[str, FindingSeverity]
+    table: Mapping[str, FindingSeverity] = field(compare=False)
 
     def __post_init__(self) -> None:
         if not self.name.strip():

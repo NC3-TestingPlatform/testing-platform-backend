@@ -123,6 +123,20 @@ def test_vocabulary_rejects_two_keys_that_fold_together() -> None:
         )
 
 
+def test_a_vocabulary_is_hashable_and_identified_by_its_name() -> None:
+    """`frozen=True` promises dict-key/set-member usability; keep the promise.
+
+    The auto-generated hash would otherwise include the `MappingProxyType`
+    table and raise `TypeError` on every call.
+    """
+    assert hash(severity_rules.VERDICT_SEVERITY) == hash(
+        severity_rules.EngineVocabulary(
+            name="verdict-severity", table={"info": FindingSeverity.INFO}
+        )
+    )
+    assert len({severity_rules.VERDICT_SEVERITY, severity_rules.VERDICT_SEVERITY}) == 1
+
+
 def test_verdict_severity_covers_the_whole_platform_vocabulary() -> None:
     """The 1:1 default maps every tier — a new tier cannot be silently unmapped."""
     assert set(severity_rules.VERDICT_SEVERITY.table.values()) == set(FindingSeverity)
@@ -255,6 +269,28 @@ def test_findings_sort_by_severity_then_check_id_then_resource() -> None:
         ("web.b", "medium", None),
         ("web.z", "info", None),
     ]
+
+
+def test_findings_tied_on_rule_and_resource_are_ordered_by_title() -> None:
+    """One rule may raise several findings about the same resource.
+
+    Without a fourth sort key these tie, and a stable sort then falls back to
+    input order — engine iteration order — which is the non-determinism
+    `order_findings` exists to remove.
+    """
+    tied = (
+        _finding("dnssec.zone", FindingSeverity.LOW, affected_resource="example.",
+                 title="Zone serial is stale"),
+        _finding("dnssec.zone", FindingSeverity.LOW, affected_resource="example.",
+                 title="NSEC3 iterations are high"),
+    )
+    forwards = finding_rules.order_findings(tied)
+    backwards = finding_rules.order_findings(tuple(reversed(tied)))
+    assert [item.title for item in forwards] == [
+        "NSEC3 iterations are high",
+        "Zone serial is stale",
+    ]
+    assert forwards == backwards
 
 
 def test_ordering_is_stable_under_a_reversed_input() -> None:

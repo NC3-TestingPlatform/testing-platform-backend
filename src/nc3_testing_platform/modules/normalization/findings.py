@@ -89,13 +89,25 @@ def severity_counts(findings: Iterable[NormalizedFinding]) -> dict[str, int]:
 def order_findings(
     findings: Iterable[NormalizedFinding],
 ) -> tuple[NormalizedFinding, ...]:
-    """Findings in persistence order: severity desc, `check_id`, resource.
+    """Findings in persistence order: severity desc, `check_id`, resource, title.
 
-    A total order over the three fields that identify a finding, so the
-    ordering is stable no matter what order the engine produced them in.
+    Ordering is stable no matter what order the engine produced them in.
     `affected_resource` is optional; a finding without one sorts before its
     siblings that have one, which is arbitrary but fixed — what matters is that
     it never varies between runs.
+
+    `title` is the last key rather than a decoration. `check_id` and
+    `affected_resource` are what regression matching keys on (§8.2), but one
+    rule may legitimately raise several findings about the same resource — two
+    distinct warnings on the same zone. Without a fourth key those tie, and
+    Python's stable sort would then fall back to input order, which is engine
+    iteration order: exactly the non-determinism this function exists to
+    remove. Findings identical in all four are interchangeable for ordering by
+    definition.
+
+    The key is a plain `(int, str, str, str)` tuple — no set or dict iteration,
+    nothing hash-derived — so the order is reproducible across processes and
+    `PYTHONHASHSEED` values.
 
     :param findings: The normalized findings of one result, in any order.
     :return: The same findings, sorted. The input is not mutated.
@@ -107,6 +119,7 @@ def order_findings(
                 _SEVERITY_RANK[finding.severity],
                 finding.check_id,
                 finding.affected_resource or "",
+                finding.title,
             ),
         )
     )

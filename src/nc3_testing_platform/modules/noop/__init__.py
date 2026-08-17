@@ -26,9 +26,9 @@ from nc3_testing_platform.modules.contract import (
     ProgressEmitter,
     ScanInput,
     TestDeclaration,
+    map_engine_severity,
 )
 from nc3_testing_platform.modules.execution import run_engine
-from nc3_testing_platform.modules.normalization.severity import map_engine_severity
 
 SCHEMA_VERSION = "noop/1.0"
 
@@ -119,7 +119,13 @@ class NoopModule:
         )
 
     def map_severity(self, engine_severity: str) -> FindingSeverity:
-        """Delegate to the default 1:1 mapping; the noop has nothing to re-rank."""
+        """Delegate to the default 1:1 mapping; the noop has nothing to re-rank.
+
+        Imported from `contract`, which is the surface a module codes against —
+        not from `modules.normalization`, which owns the implementation behind
+        it (IDR-018). A module reaches into the normalization layer only to
+        declare a *non-default* engine vocabulary, the way `dnssec` does.
+        """
         return map_engine_severity(engine_severity)
 
 
