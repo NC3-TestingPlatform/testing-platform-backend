@@ -27,8 +27,8 @@ migrate:
 DOMAIN ?= example.com
 export DOMAIN
 scan:
-	docker compose exec -T -e SCAN_DOMAIN="$${DOMAIN}" worker-platform \
-		python -m nc3_testing_platform.tools.seed_scan
+	docker compose exec -T -e SCAN_DOMAIN="$${DOMAIN}" -e SCAN_MODULE="$${MODULE}" \
+		worker-platform python -m nc3_testing_platform.tools.seed_scan
 
 # Database migrations (docs/database-migrations.md).
 # migrations/env.py refuses to run without DATABASE_URL (a downgrade against a

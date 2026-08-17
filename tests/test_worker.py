@@ -10,7 +10,11 @@ import pytest
 
 import nc3_testing_platform.worker.tasks  # noqa: F401  — registers the scan.* tasks
 from nc3_testing_platform.worker.app import app
-from nc3_testing_platform.worker.preflight import REQUIRED_BINARIES, run_preflight
+from nc3_testing_platform.worker.preflight import (
+    REQUIRED_BINARIES,
+    REQUIRED_ENGINES,
+    run_preflight,
+)
 
 
 def test_adr_limits_are_set() -> None:
@@ -74,3 +78,40 @@ def test_preflight_rejects_binary_below_minimum_version(
     monkeypatch.setitem(preflight.MINIMUM_VERSIONS, "python3", (99, 0))
     with pytest.raises(SystemExit):
         run_preflight("platform")
+
+
+def test_required_engines_cover_every_queue() -> None:
+    """The binary and engine registries name the same queues, empty rows included.
+
+    A queue present in one and absent from the other is how a new egress
+    profile silently skips a whole class of checks.
+    """
+    assert set(REQUIRED_ENGINES) == set(REQUIRED_BINARIES)
+
+
+def test_preflight_rejects_missing_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An image lacking a required engine distribution must refuse to start."""
+    monkeypatch.setitem(
+        REQUIRED_ENGINES, "platform", (("distribution-that-cannot-exist", "1.0.0"),)
+    )
+    with pytest.raises(SystemExit):
+        run_preflight("platform")
+
+
+def test_preflight_rejects_engine_version_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A present engine at the wrong version must refuse to start."""
+    monkeypatch.setitem(REQUIRED_ENGINES, "platform", (("pytest", "0.0.0"),))
+    with pytest.raises(SystemExit):
+        run_preflight("platform")
+
+
+def test_preflight_accepts_present_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A present engine at the expected version passes."""
+    from importlib import metadata
+
+    monkeypatch.setitem(
+        REQUIRED_ENGINES, "platform", (("pytest", metadata.version("pytest")),)
+    )
+    run_preflight("platform")
