@@ -34,6 +34,7 @@ from nc3_testing_platform.core.enums import (
     ScanGrade,
     ScanModule,
 )
+from nc3_testing_platform.modules.normalization import severity as _severity
 
 logger = getLogger(__name__)
 
@@ -315,23 +316,17 @@ class ProgressEmitter:
         return _callback
 
 
-def map_engine_severity(engine_severity: str) -> FindingSeverity:
-    """The default severity hook: engine `VerdictSeverity` name → platform value.
-
-    The engines' five-tier vocabulary (CRITICAL, HIGH, MEDIUM, LOW, INFO)
-    maps 1:1 onto :class:`FindingSeverity`, so the default is a case-blind
-    rename. It stays an explicit per-module hook (`TestModule.map_severity`)
-    because the 1:1 is an observation about today's engines, not a law; a
-    module that needs to re-rank overrides the hook, everyone else delegates
-    here. Unknown input raises rather than guessing a severity.
-    """
-    try:
-        return FindingSeverity(engine_severity.strip().lower())
-    except ValueError:
-        raise ValueError(
-            f"engine severity {engine_severity!r} has no FindingSeverity "
-            "equivalent; the module must map it explicitly."
-        ) from None
+# The default severity hook: the engines' five-tier `VerdictSeverity`
+# (CRITICAL, HIGH, MEDIUM, LOW, INFO) mapped 1:1 onto `FindingSeverity`.
+#
+# US #76 published this name and every module imports it from here, so the
+# name stays. Ownership does not: IDR-018 makes `modules.normalization` the
+# single owner of engine→platform mapping, of the strict unknown-value policy,
+# and of the registry of engine vocabularies — a module whose engine speaks
+# something other than `VerdictSeverity` declares an `EngineVocabulary` there
+# rather than writing its own lookup. Re-exported, not re-implemented, so
+# there is exactly one definition of what an unknown severity does.
+map_engine_severity = _severity.map_engine_severity
 
 
 @runtime_checkable

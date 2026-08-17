@@ -40,6 +40,17 @@ jobs:
       - name: Test
         run: uv run --locked pytest
 
+      # Taiga #206: the normalization layer is the single owner of
+      # engine→platform mapping (IDR-018) and is small and pure, so it carries
+      # a 100 % branch-coverage gate of its own. Scoped to that package and run
+      # from its own suite, so the gate proves the layer's tests are complete
+      # rather than borrowing coverage from the module tests.
+      - name: Normalization coverage gate
+        run: >-
+          uv run --locked pytest tests/test_normalization.py
+          --cov=nc3_testing_platform.modules.normalization
+          --cov-branch --cov-fail-under=100
+
   # Taiga #157: the fakeredis unit tests run everywhere; this job re-runs the
   # marker-gated round trips against a real server, guarding fakeredis drift.
   redis-integration:

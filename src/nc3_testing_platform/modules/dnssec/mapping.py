@@ -15,17 +15,16 @@ from typing import Any
 from nc3_testing_platform.core.enums import FindingSeverity
 from nc3_testing_platform.modules.contract import NormalizedFinding
 from nc3_testing_platform.modules.dnssec import schema
+from nc3_testing_platform.modules.normalization import severity as severity_rules
 
 # The engine's chain status, mapped to the platform severity of a *finding*
-# about that status. A bogus link is an active cryptographic failure; an
-# insecure delegation is a posture gap; an operational error could not
-# validate; a secure chain is reported for the record.
-_SEVERITY_BY_STATUS: Mapping[str, FindingSeverity] = {
-    "secure": FindingSeverity.INFO,
-    "insecure": FindingSeverity.MEDIUM,
-    "bogus": FindingSeverity.HIGH,
-    "error": FindingSeverity.LOW,
-}
+# about that status. The table is declared in the normalization layer's
+# vocabulary registry rather than here (IDR-018): the module still owns *what*
+# a status means — a bogus link is an active cryptographic failure, an insecure
+# delegation is a posture gap, an operational error could not validate, and a
+# secure chain is reported for the record — but the platform owns how a value
+# is matched and what an unmapped one does.
+_VOCABULARY = severity_rules.CHAINVALIDATOR_STATUS
 
 _TITLE_BY_STATUS: Mapping[str, str] = {
     "secure": "DNSSEC chain of trust is intact",
@@ -43,12 +42,7 @@ def map_status_severity(status: str) -> FindingSeverity:
     :raises ValueError: If *status* is not one the engine emits — the module
         maps its own vocabulary explicitly and never guesses a severity.
     """
-    try:
-        return _SEVERITY_BY_STATUS[status.strip().lower()]
-    except KeyError:
-        raise ValueError(
-            f"chainvalidator status {status!r} has no severity mapping."
-        ) from None
+    return _VOCABULARY.map_severity(status)
 
 
 def _evidence(source: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
