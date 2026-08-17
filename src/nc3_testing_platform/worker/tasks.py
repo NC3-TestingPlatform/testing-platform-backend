@@ -426,7 +426,13 @@ def _reap_stuck_job(job_id: uuid.UUID) -> None:
             status_reason=orchestration.REASON_JOB_TIMEOUT,
             occurred_at=swept,
         )
-    _finalize_and_publish(job_id, reason_override=orchestration.REASON_JOB_TIMEOUT)
+    # Only stamp the job-timeout reason when this sweep actually cut work
+    # short: a job whose children all finished but whose finalize was lost
+    # (worker died between commit and finalize) closes on its own merits.
+    _finalize_and_publish(
+        job_id,
+        reason_override=orchestration.REASON_JOB_TIMEOUT if failed_tasks else None,
+    )
 
 
 @app.task(name="scan.heartbeat")

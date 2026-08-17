@@ -194,7 +194,8 @@ jobs:
           esac
           for attempt in $(seq 1 30); do
             count=$(docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
-              -tAc "SELECT count(*) FROM scan_result r
+              -tAc "SELECT count(*) FROM finding f
+                      JOIN scan_result r ON f.scan_result_id = r.id
                       JOIN scan_task t ON r.scan_task_id = t.id
                       JOIN scan_job j ON t.scan_job_id = j.id
                      WHERE j.id = '${job_id}'
