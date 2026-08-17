@@ -131,13 +131,34 @@ CHAINVALIDATOR_STATUS = EngineVocabulary(
     },
 )
 
+# quantumvalidator reports a per-check Status (pass/fail/info/error) and an
+# overall Verdict (safe/unsafe), not severity: a failed PQC-readiness check is
+# a CNSA 2.0 / BSI TR-02102 posture gap (harvest-now-decrypt-later exposure,
+# the same tier as an unsigned delegation), an operational error could not
+# assess, and pass/safe are recorded for the evidence trail.
+QUANTUMVALIDATOR_STATUS = EngineVocabulary(
+    name="quantumvalidator-status",
+    table={
+        "pass": FindingSeverity.INFO,
+        "info": FindingSeverity.INFO,
+        "safe": FindingSeverity.INFO,
+        "fail": FindingSeverity.MEDIUM,
+        "unsafe": FindingSeverity.MEDIUM,
+        "error": FindingSeverity.LOW,
+    },
+)
+
 # The registry: every vocabulary that ships in-tree, keyed by name. Immutable
 # and built here rather than populated by import side effects, so what the
 # platform knows does not depend on which modules happen to be imported.
 VOCABULARIES: Mapping[str, EngineVocabulary] = MappingProxyType(
     {
         vocabulary.name: vocabulary
-        for vocabulary in (VERDICT_SEVERITY, CHAINVALIDATOR_STATUS)
+        for vocabulary in (
+            VERDICT_SEVERITY,
+            CHAINVALIDATOR_STATUS,
+            QUANTUMVALIDATOR_STATUS,
+        )
     }
 )
 

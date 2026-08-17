@@ -162,7 +162,24 @@ def test_the_registry_lists_every_in_tree_vocabulary_by_name() -> None:
     assert severity_rules.VOCABULARIES == {
         "verdict-severity": severity_rules.VERDICT_SEVERITY,
         "chainvalidator-status": severity_rules.CHAINVALIDATOR_STATUS,
+        "quantumvalidator-status": severity_rules.QUANTUMVALIDATOR_STATUS,
     }
+
+
+def test_quantumvalidator_vocabulary_maps_status_and_verdict_values() -> None:
+    """One table covers both engine enums: check Status and overall Verdict."""
+    vocabulary = severity_rules.QUANTUMVALIDATOR_STATUS
+    for value in ("pass", "info", "safe"):
+        assert vocabulary.map_severity(value) is FindingSeverity.INFO
+    for value in ("fail", "UNSAFE"):
+        assert vocabulary.map_severity(value) is FindingSeverity.MEDIUM
+    assert vocabulary.map_severity(" Error ") is FindingSeverity.LOW
+
+
+def test_quantumvalidator_vocabulary_refuses_an_undeclared_value() -> None:
+    """A value the engine never emits raises; the layer never guesses."""
+    with pytest.raises(ValueError, match="no severity mapping"):
+        severity_rules.QUANTUMVALIDATOR_STATUS.map_severity("quantum-broken")
 
 
 def test_the_contract_re_exports_the_owner_rather_than_reimplementing_it() -> None:

@@ -47,7 +47,10 @@ MINIMUM_VERSIONS: dict[str, tuple[int, int]] = {
 # REQUIRED_BINARIES queue has a row, empty or not, so a new queue cannot
 # silently skip this registry.
 REQUIRED_ENGINES: dict[str, tuple[tuple[str, str], ...]] = {
-    "non-intrusive-scan": (("chainvalidator", "0.1.6"),),
+    "non-intrusive-scan": (
+        ("chainvalidator", "0.1.6"),
+        ("quantumvalidator", "0.6.4"),
+    ),
     "intrusive-scan": (),
     "file-analysis": (),
     "platform": (),

@@ -152,5 +152,13 @@ shape. Without `MODULE`, the seed keeps its pre-created `web.noop` task (the
 noop is roster-only, off-catalog). The engine runs under the runner's
 wall-clock budget: 60 s by default, raisable to at most 120 s via the launch
 options' `budget` key. A wrong image build surfaces before any scan:
-`worker/preflight.py` checks the engine distribution and its exact version at
-worker start (`make logs`).
+`worker/preflight.py` checks each engine distribution and its exact version
+at worker start (`make logs`).
+
+The same procedure verifies the PQC module with
+`make scan DOMAIN=cloudflare.com MODULE=pqc`
+(expect `pqc.readiness` INFO with `negotiated_group: X25519MLKEM768`), and a
+classical-only host yields `pqc.readiness` + `pqc.check.key_exchange`, both
+MEDIUM. Its budget clamp is 30 s default /
+60 s max, and the launch options' `port` key points the probe at another
+service (the engine fingerprints STARTTLS and SSH from the banner).

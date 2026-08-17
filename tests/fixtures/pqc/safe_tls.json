@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "name": "tls_version",
+      "reason": "TLS 1.3 is required for PQC hybrid key exchange.",
+      "standard": "CNSA 2.0, BSI TR-02102-2",
+      "status": "PASS",
+      "value": "TLSv1.3"
+    },
+    {
+      "name": "key_exchange",
+      "reason": "PQC hybrid group negotiated (0x11ec).",
+      "standard": "BSI TR-02102-2",
+      "status": "PASS",
+      "value": "X25519MLKEM768"
+    }
+  ],
+  "detected_starttls": null,
+  "negotiated_group": "X25519MLKEM768",
+  "port": 443,
+  "target": "cloudflare.com",
+  "tls_version": "TLSv1.3",
+  "verdict": "SAFE"
+}

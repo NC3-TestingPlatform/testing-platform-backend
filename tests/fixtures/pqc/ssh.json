@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "name": "ssh_version",
+      "reason": "SSH 2 is required; SSH 1 is cryptographically broken.",
+      "standard": "NIST SP 800-209",
+      "status": "PASS",
+      "value": "SSHv2"
+    },
+    {
+      "name": "kex_algorithm",
+      "reason": "No PQC-hybrid KEX algorithm advertised; got sntrup761x25519-sha512. Upgrade to OpenSSH \u2265 9.9 and enable mlkem768nistp256-sha256.",
+      "standard": "NIST FIPS 203",
+      "status": "FAIL",
+      "value": "sntrup761x25519-sha512"
+    }
+  ],
+  "detected_starttls": "ssh",
+  "negotiated_group": "sntrup761x25519-sha512",
+  "port": 22,
+  "target": "github.com",
+  "tls_version": "SSHv2",
+  "verdict": "UNSAFE"
+}
