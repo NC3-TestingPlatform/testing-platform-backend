@@ -112,7 +112,7 @@ reduce latency).
 
 | Seam | Owner |
 |---|---|
-| Engine packages in worker images + preflight entries | B1 |
+| Engine packages in worker images + preflight entries (chainvalidator landed with M11 / US #102 as the exemplar; the rest of the roll-out) | B1 |
 | RLS revalidation of worker writes (`APP_DATABASE_URL`, `SET LOCAL`) | B5 / US #81 |
 | `finding.status` derived from history — until then every finding is written `new` through `orchestration.derive_finding_status()` | B12a / US #87 |
 | SSE delivery of the event channel | B13 |
@@ -121,3 +121,36 @@ reduce latency).
 
 No v4.0 module populates `ModuleResult.grade`; the column passes through as
 `NULL` until the grading M-stories land.
+
+## Live engine verification (dnssec)
+
+CI's compose smoke deliberately stays on `web.noop` — deterministic, zero
+egress — so a required check can never flake on someone else's DNS. Verifying
+a provisioned engine against live DNS is always a manual, local step:
+
+```bash
+make up && make migrate
+job_id=$(make scan DOMAIN=nc3.lu MODULE=dnssec | tail -n1)
+
+docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
+  -c "select status, status_reason from scan_task where scan_job_id = '${job_id}';" \
+  -c "select f.check_id, f.severity, f.title from finding f
+      join scan_result r on f.scan_result_id = r.id
+      join scan_task t on r.scan_task_id = t.id where t.scan_job_id = '${job_id}';"
+```
+
+Expected: the task ends `completed` with `status_reason` NULL — specifically
+**not** `task.engine_error`, which is what an image missing the engine
+produces — and at least the `dnssec.chain_of_trust` finding is persisted.
+Against a deliberately broken zone (any of the well-known dnssec-failed test
+domains), the task still ends `completed` with `dnssec.delegation.bogus` /
+HIGH findings: a bogus chain is a *finding*, not an engine failure.
+
+`MODULE=<scan_module>` makes the seed commit the job alone and lets
+`scan.dispatch` build the matrix from the §7.3 catalog — the production
+shape. Without `MODULE`, the seed keeps its pre-created `web.noop` task (the
+noop is roster-only, off-catalog). The engine runs under the runner's
+wall-clock budget: 60 s by default, raisable to at most 120 s via the launch
+options' `budget` key. A wrong image build surfaces before any scan:
+`worker/preflight.py` checks the engine distribution and its exact version at
+worker start (`make logs`).

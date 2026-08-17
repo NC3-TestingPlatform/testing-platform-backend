@@ -5,16 +5,18 @@ check runs at worker start (see `app._preflight`) and exits the process with a
 readable list of what is missing — the alternative, tool auto-detection with
 silent skipping, produces scans that look complete and are not (US #78 ADR).
 
-The registry names what the *current* image is expected to carry. Engine
-binaries (nmap, subfinder and friends) join their queue's list in the same
-commit that installs them into that queue's Dockerfile stage, so image and
-check cannot drift apart.
+The registries name what the *current* image is expected to carry. Engine
+binaries (nmap, subfinder and friends) and Python engine distributions
+(chainvalidator and friends) join their queue's list in the same commit that
+installs them into that queue's Dockerfile stage, so image and check cannot
+drift apart.
 """
 
 import re
 import shutil
 import subprocess
 import sys
+from importlib import metadata
 
 REQUIRED_BINARIES: dict[str, tuple[str, ...]] = {
     # chainvalidator/mailvalidator/headersvalidator/quantumvalidator need an
@@ -32,6 +34,23 @@ REQUIRED_BINARIES: dict[str, tuple[str, ...]] = {
 # producing quietly incomplete scans.
 MINIMUM_VERSIONS: dict[str, tuple[int, int]] = {
     "openssl": (3, 5),
+}
+
+# Python engine distributions per queue, checked by metadata — never imported
+# here, engines are imported only in the runner's child process. Versions are
+# literals like MINIMUM_VERSIONS, not the modules' schema constants: this file
+# is core and never imports a concrete plug-in (IDR-007, pinned by
+# test_core_never_imports_modules); tests/test_dnssec_module.py ties each
+# literal to its module's schema constant and the pyproject pin instead, so a
+# stale image (or a bumped pin without a rebuilt image) still dies at startup
+# rather than failing every scan with task.engine_error. Every
+# REQUIRED_BINARIES queue has a row, empty or not, so a new queue cannot
+# silently skip this registry.
+REQUIRED_ENGINES: dict[str, tuple[tuple[str, str], ...]] = {
+    "non-intrusive-scan": (("chainvalidator", "0.1.6"),),
+    "intrusive-scan": (),
+    "file-analysis": (),
+    "platform": (),
 }
 
 
@@ -77,6 +96,19 @@ def run_preflight(queue: str) -> None:
             sys.exit(
                 f"preflight: queue {queue!r} requires {binary} >= {wanted}, "
                 f"the image carries {got}. Refusing to start."
+            )
+    for distribution, expected in REQUIRED_ENGINES[queue]:
+        try:
+            installed = metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            sys.exit(
+                f"preflight: queue {queue!r} requires the {distribution!r} engine "
+                f"distribution and the image does not carry it. Refusing to start."
+            )
+        if installed != expected:
+            sys.exit(
+                f"preflight: queue {queue!r} requires {distribution} == {expected}, "
+                f"the image carries {installed}. Refusing to start."
             )
 
 

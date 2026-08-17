@@ -9,6 +9,7 @@ in `tests/conformance.py` that the noop passes.
 """
 
 import json
+import tomllib
 from pathlib import Path
 
 import conformance
@@ -20,6 +21,7 @@ from nc3_testing_platform.modules import registry
 from nc3_testing_platform.modules.contract import ProgressEmitter, ScanInput
 from nc3_testing_platform.modules.dnssec import MODULE as DNSSEC_MODULE
 from nc3_testing_platform.modules.dnssec import DnssecModule, mapping, runner, schema
+from nc3_testing_platform.worker.preflight import REQUIRED_ENGINES
 
 FIXTURES = Path(__file__).parent / "fixtures" / "dnssec"
 
@@ -118,6 +120,30 @@ def test_dnssec_is_discoverable_via_entry_points() -> None:
     """The module is found through the entry-point group, not by import."""
     roster = registry.discover()
     assert roster.queue_for("dnssec.chainvalidator") == "non-intrusive-scan"
+
+
+def test_engine_pin_matches_schema_version() -> None:
+    """The pyproject pin, the descriptor, and preflight cannot drift apart.
+
+    Preflight refuses an image whose installed chainvalidator differs from its
+    REQUIRED_ENGINES literal — a literal because preflight is core and never
+    imports this module (IDR-007). This test is the coupling instead: one
+    commit bumps the pin, `schema.ENGINE_VERSION`, the preflight literal, and
+    the lock, or the suite fails.
+    """
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    (requirement,) = [
+        line
+        for line in pyproject["project"]["optional-dependencies"]["modules"]
+        if line.startswith("chainvalidator")
+    ]
+    assert requirement.endswith(f"@v{schema.ENGINE_VERSION}")
+    assert (
+        "chainvalidator",
+        schema.ENGINE_VERSION,
+    ) in REQUIRED_ENGINES["non-intrusive-scan"]
 
 
 def test_budget_clamp_bounds_both_sides() -> None:

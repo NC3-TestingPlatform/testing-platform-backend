@@ -61,7 +61,12 @@ RUN mkdir -p /var/lib/celery && chown app:app /var/lib/celery
 FROM worker-base AS worker-non-intrusive-scan
 
 # openssl >= 3.5 for the post-quantum checks; trixie's package satisfies it.
-RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+# git exists only for uv to fetch the locked chainvalidator tag (uv resolves
+# git sources through the git CLI); purged in the same layer.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    apt-get update && apt-get install -y --no-install-recommends openssl git \
+    && uv sync --locked --no-dev --extra modules \
+    && apt-get purge -y git && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 ENV WORKER_QUEUE=non-intrusive-scan
 USER app
