@@ -497,25 +497,55 @@ def test_discovery_reports_an_unloadable_entry_point() -> None:
 
 
 def test_core_never_imports_modules() -> None:
-    """Nothing outside `modules/` imports `nc3_testing_platform.modules.*`.
+    """Nothing outside `modules/` imports a concrete module plug-in.
 
-    Discovery goes through entry points only (IDR-007); this is the test the
-    plan calls core-never-imports-modules, over the actual import statements
-    of every platform source file.
+    Discovery goes through entry points only (IDR-007): a platform file that
+    imports `modules.noop`, `modules.dnssec`, or any future plug-in package
+    by name has bypassed the roster. The plug-in *infrastructure* — the
+    contract SDK, the registry, the shared runner, the catalog, and the
+    normalization layer — is the bounded context's platform-facing surface
+    and is exactly what the worker consumes (US #76: the API asks
+    `queue_for`, a worker asks `require`; B8 wires it), so importing those
+    is the design, not a violation.
     """
+    prefix = "nc3_testing_platform.modules"
+    infrastructure = {"contract", "registry", "execution", "catalog", "normalization"}
     offenders: list[str] = []
     for path in sorted(SRC_ROOT.rglob("*.py")):
         if SRC_ROOT / "modules" in path.parents:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            names: list[str] = []
+            imported: list[str] = []
             if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            if any(name.startswith("nc3_testing_platform.modules") for name in names):
-                offenders.append(str(path.relative_to(SRC_ROOT)))
+                imported = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level == 0:
+                    base = node.module or ""
+                else:
+                    # Resolve `from ..x import y` against the file's package,
+                    # so a relative spelling cannot slip past the rule.
+                    package = [
+                        "nc3_testing_platform",
+                        *path.relative_to(SRC_ROOT).parent.parts,
+                    ]
+                    trimmed = package[: len(package) - (node.level - 1)]
+                    base = ".".join(
+                        trimmed + ([node.module] if node.module else [])
+                    )
+                if not base:
+                    continue
+                if base == prefix:
+                    # `from …modules import X` names X directly.
+                    imported = [f"{prefix}.{alias.name}" for alias in node.names]
+                else:
+                    imported = [base]
+            for name in imported:
+                if not name.startswith(f"{prefix}."):
+                    continue
+                head = name.removeprefix(f"{prefix}.").split(".")[0]
+                if head not in infrastructure:
+                    offenders.append(f"{path.relative_to(SRC_ROOT)} -> {name}")
     assert offenders == []
 
 

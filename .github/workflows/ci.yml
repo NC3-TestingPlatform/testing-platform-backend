@@ -178,19 +178,35 @@ jobs:
             exit 1
           fi
 
+      - name: Apply migrations inside the stack
+        run: make migrate
+
       - name: Scan round trip lands in PostgreSQL
         run: |
-          make scan DOMAIN=ci-smoke.example
+          # Seeds a guest job with one web.noop task and dispatches it
+          # (tools/seed_scan.py): broker -> dispatch -> run_module -> real
+          # scan_result/finding rows -> completion counting closes the job.
+          # The poll is scoped to the seeded job's id, so an older run of
+          # this smoke can never satisfy the check.
+          job_id=$(make scan DOMAIN=ci-smoke.example | tail -n1)
+          case "$job_id" in
+            *[!0-9a-f-]*|"") echo "::error::seed did not print a job id: ${job_id}" >&2; exit 1 ;;
+          esac
           for attempt in $(seq 1 30); do
             count=$(docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
-              -tAc "SELECT count(*) FROM scan_artifacts WHERE domain = 'ci-smoke.example'" 2>/dev/null || echo 0)
+              -tAc "SELECT count(*) FROM finding f
+                      JOIN scan_result r ON f.scan_result_id = r.id
+                      JOIN scan_task t ON r.scan_task_id = t.id
+                      JOIN scan_job j ON t.scan_job_id = j.id
+                     WHERE j.id = '${job_id}'
+                       AND j.status = 'completed'" 2>/dev/null || echo 0)
             if [ "${count:-0}" -ge 1 ]; then
-              echo "artifact persisted after ${attempt} polls"
+              echo "result persisted and job ${job_id} completed after ${attempt} polls"
               exit 0
             fi
             sleep 2
           done
-          echo "::error::no scan artifact appeared within 60s" >&2
+          echo "::error::job ${job_id} produced no completed result within 60s" >&2
           exit 1
 
       - name: Dump logs on failure

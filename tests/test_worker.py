@@ -2,14 +2,15 @@
 
 The Celery app must be importable and carry the US #78 ADR settings — the
 compose stack takes both for granted. Task round trips need the real stack and
-run there (`make scan`), not here.
+run there (`make scan`), not here; the orchestration logic itself is covered
+in tests/test_orchestration.py.
 """
 
 import pytest
 
+import nc3_testing_platform.worker.tasks  # noqa: F401  — registers the scan.* tasks
 from nc3_testing_platform.worker.app import app
 from nc3_testing_platform.worker.preflight import REQUIRED_BINARIES, run_preflight
-from nc3_testing_platform.worker.tasks import MOCK_MODULES
 
 
 def test_adr_limits_are_set() -> None:
@@ -28,9 +29,17 @@ def test_every_task_routes_to_a_known_queue() -> None:
         assert routes[name]["queue"] in REQUIRED_BINARIES
 
 
-def test_mock_modules_exist() -> None:
-    """The fan-out has something to fan out to."""
-    assert len(MOCK_MODULES) > 0
+def test_beat_schedule_covers_the_sweeps() -> None:
+    """The reaper and heartbeat run on beat, and only route to platform.
+
+    Both close state-diagram holes (stranded publish, stuck running), so a
+    schedule that silently loses one produces jobs that never terminate.
+    """
+    scheduled = {entry["task"] for entry in app.conf.beat_schedule.values()}
+    assert {"scan.reap", "scan.heartbeat"} <= scheduled
+    for entry in app.conf.beat_schedule.values():
+        assert app.conf.task_routes[entry["task"]]["queue"] == "platform"
+        assert entry["schedule"] > 0
 
 
 def test_preflight_rejects_unknown_queue() -> None:
