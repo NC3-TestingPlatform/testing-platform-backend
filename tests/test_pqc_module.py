@@ -107,6 +107,8 @@ def test_mapping_ssh_report_names_the_kex_and_host_key_gaps() -> None:
     assert f"{schema.CHECK_PREFIX}.kex_algorithm" in by_check
     host_keys = by_check[f"{schema.CHECK_PREFIX}.host_key_algorithms"]
     assert host_keys.severity is FindingSeverity.MEDIUM
+    assert host_keys.evidence is not None
+    assert host_keys.evidence["value"] == "ssh-rsa"
     summary = mapping.summarize(_report("ssh"))
     assert summary["tls_version"] == "SSHv2"
     assert summary["port"] == 22
