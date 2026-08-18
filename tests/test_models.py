@@ -19,6 +19,8 @@ from nc3_testing_platform.models import Base
 EXPECTED_TABLES = {
     "organization",
     "app_user",
+    "user_credential",
+    "user_session",
     "key_envelope",
     "organization_invitation",
     "asset",

@@ -20,6 +20,9 @@ DECLARED_COMPONENTS = (
 )
 
 ANONYMOUS_OPERATIONS = {
+    # B3: the operations that mint an identity are anonymous by construction.
+    ("/api/v1/auth/register", "post"),
+    ("/api/v1/auth/login", "post"),
     ("/api/v1/scans", "post"),
     ("/api/v1/scans/{scan_id}", "get"),
     ("/api/v1/scans/{scan_id}/results", "get"),

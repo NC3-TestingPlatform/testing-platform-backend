@@ -38,6 +38,18 @@ SPEC: dict[str, Any] = json.loads(Path("api/openapi.json").read_text(encoding="u
 
 _METHODS = ("get", "post", "put", "patch", "delete")
 
+# Operations realized against the database (B3 / US #79): this module smokes
+# the live mock in-process with no PostgreSQL, so the real auth handlers are
+# exempt here. Their coverage lives in tests/test_auth_flow.py (unit, mocked
+# session layer) and tests/test_auth_postgres.py (live, `pytest -m postgres`).
+REALIZED_OPERATIONS = {
+    ("post", "/api/v1/auth/register"),
+    ("post", "/api/v1/auth/login"),
+    ("get", "/api/v1/auth/session"),
+    ("post", "/api/v1/auth/logout"),
+    ("post", "/api/v1/auth/password"),
+}
+
 _CLAIM_TOKEN = "9xK2mQ7pL4vR8nT1jH5gF3dS6aW0zYbUcElOnAiKrXs"
 
 # Size sanity for the buffered stream body; the module timeout bounds a hang.
@@ -300,14 +312,14 @@ def test_cases_cover_every_operation() -> None:
         if method in _METHODS
     }
     covered = {(case.method, case.path) for case in CASES}
-    assert covered == inventory
+    assert covered == inventory - REALIZED_OPERATIONS
 
 
 def test_cases_cover_every_request_media_type() -> None:
     """Every declared request media type of every operation has a case sending it."""
     for path, item in SPEC["paths"].items():
         for method, operation in item.items():
-            if method not in _METHODS:
+            if method not in _METHODS or (method, path) in REALIZED_OPERATIONS:
                 continue
             declared = set(operation.get("requestBody", {}).get("content", {}))
             sent = {
