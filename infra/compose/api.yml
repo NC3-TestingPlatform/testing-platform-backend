@@ -11,8 +11,9 @@ services:
       # The mock handlers use none of these yet; they are wired now so the ORM
       # (issue #2) and scan-launch work change code, not the compose stack.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
-      # Runtime role connection (docs/database-roles.md). Unused until the
-      # session layer lands (B5); wired now so that work changes code, not compose.
+      # Runtime role connection (docs/database-roles.md): the tenant role
+      # `nc3_app`, which the workers read since B5. The API itself opens no
+      # session until B3 wires its session dependency onto core/rls.py.
       # The password is interpolated raw: if it contains URL-reserved characters
       # (@ : / % ? #), set APP_DATABASE_URL directly with it percent-encoded.
       APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:-nc3_app}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}

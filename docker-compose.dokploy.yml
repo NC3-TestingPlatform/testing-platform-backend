@@ -20,7 +20,8 @@ x-worker: &worker
   environment: &worker-env
     CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
-    # Runtime role connection (docs/database-roles.md); unused until the session layer lands (B5).
+    # Runtime role connection (docs/database-roles.md): the tenant role for the
+    # scan queues; worker-platform and beat override it with `app_platform`.
     # The password is interpolated raw: if it contains URL-reserved characters
     # (@ : / % ? #), also set APP_DATABASE_URL with it percent-encoded.
     APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
@@ -152,6 +153,10 @@ services:
     build:
       context: .
       target: worker-platform
+    environment:
+      <<: *worker-env
+      # Cross-organization duties run as `app_platform` (IDR-012).
+      APP_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://app_platform:${NC3_PLATFORM_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
     command: ["celery", "-A", "nc3_testing_platform.worker.app", "worker", "--queues=platform", "--pool=prefork", "--concurrency=${CELERY_PREFORK_CONCURRENCY:-4}", "--hostname=platform@%h"]
 
   beat:
@@ -159,6 +164,11 @@ services:
     build:
       context: .
       target: worker-platform
+    environment:
+      <<: *worker-env
+      # Beat never opens a session; the platform credential keeps it from ever
+      # silently becoming a tenant-role DB client.
+      APP_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://app_platform:${NC3_PLATFORM_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
     command: ["celery", "-A", "nc3_testing_platform.worker.app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/beat-schedule"]
     volumes:
       - beat-schedule:/var/lib/celery
