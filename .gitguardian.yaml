@@ -1,0 +1,11 @@
+# ggshield configuration (local pre-commit / CI CLI scans only — the
+# GitGuardian GitHub App and dashboard do NOT read this file; their triage
+# lives workspace-side). Rationale and the full false-positive inventory:
+# docs/secret-scanning.md.
+version: 2
+
+secret:
+  ignored_paths:
+    # An inventory of development-only defaults by definition; every value in
+    # it works solely against a developer's loopback Compose stack.
+    - .env.example
