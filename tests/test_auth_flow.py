@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-import fakeredis
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -40,6 +39,23 @@ PASSWORD = SecretStr("correct horse battery")
 def master_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every auth test runs with a synthetic deployment master key."""
     monkeypatch.setattr(settings, "app_encryption_master_key", TEST_KEY_HEX)
+
+
+@pytest.fixture(autouse=True)
+def no_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test off any real Redis: the gate allows by default.
+
+    Patching the public `consume` boundary (not the private client) makes the
+    suite order-independent even when a developer has the compose Redis up;
+    the rate-limit tests below override this same boundary deliberately.
+    """
+
+    async def _allow(key: str, *, limit: int, window_seconds: int, client: Any = None) -> Any:
+        return redis_utils.RateLimitDecision(
+            allowed=True, limit=limit, remaining=limit, reset_seconds=window_seconds
+        )
+
+    monkeypatch.setattr(redis_utils, "consume", _allow)
 
 
 def _registration(**overrides: Any) -> RegistrationSubmission:
@@ -644,9 +660,20 @@ def test_login_rate_limit_answers_429(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Past the per-IP window the login answers 429 with quota headers."""
-    monkeypatch.setattr(
-        redis_utils, "_client", fakeredis.FakeAsyncRedis(decode_responses=True)
-    )
+    calls = {"count": 0}
+
+    async def _counting(
+        key: str, *, limit: int, window_seconds: int, client: Any = None
+    ) -> Any:
+        calls["count"] += 1
+        return redis_utils.RateLimitDecision(
+            allowed=calls["count"] <= limit,
+            limit=limit,
+            remaining=max(0, limit - calls["count"]),
+            reset_seconds=30,
+        )
+
+    monkeypatch.setattr(redis_utils, "consume", _counting)
     monkeypatch.setattr(settings, "auth_login_rate_limit", 2)
 
     def _raise(db: Any, *, email: str, password: Any) -> Any:

@@ -104,8 +104,9 @@ membership, and finally validates the role's *effective* privileges
 **No password appears in any migration.** The revisions create the roles with
 `LOGIN` but no credential; each environment sets its own:
 
-- **Development**: `NC3_APP_DB_PASSWORD` and `NC3_PLATFORM_DB_PASSWORD` in
-  `.env` (see `.env.example`), applied once per PostgreSQL cluster — the
+- **Development**: `NC3_APP_DB_PASSWORD`, `NC3_PLATFORM_DB_PASSWORD`, and
+  `NC3_AUTH_DB_PASSWORD` in `.env` (see `.env.example`), applied once per
+  PostgreSQL cluster — the
   `ALTER ROLE` must set the same values the compose URLs interpolate:
 
   ```bash
@@ -118,8 +119,8 @@ membership, and finally validates the role's *effective* privileges
 
   `nc3_auth_definer` is NOLOGIN and never gets a password.
 
-- **Dokploy**: set both variables in the application's environment tab and
-  run the same `ALTER ROLE` against the deployment database.
+- **Dokploy**: set all three variables in the application's environment tab
+  and run the same `ALTER ROLE` against the deployment database.
 
 The API service additionally carries `AUTH_DATABASE_URL` (`core/api_db.py`; settings field `auth_database_url`) for the `nc3_auth` engine — no worker service gets it, and the deployment master-key secret mounts into the api service only. The API and worker services carry `APP_DATABASE_URL`; `worker/db.py` reads it
 (via `settings.app_database_url`). Which role the credential names is compose

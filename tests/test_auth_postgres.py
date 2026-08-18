@@ -61,8 +61,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setattr(
         settings, "auth_database_url", _role_url("nc3_auth", "AUTH_DATABASE_URL")
     )
-    monkeypatch.setattr(api_db, "_auth_engine", None)
-    monkeypatch.setattr(api_db, "_auth_factory", None)
+    # Plain assignment, not monkeypatch: monkeypatch's teardown runs after
+    # this fixture's post-yield body and would restore (possibly disposed)
+    # prior engines over the explicit reset below.
+    stale = api_db._auth_engine
+    if stale is not None:
+        stale.dispose()
+    api_db._auth_engine = None
+    api_db._auth_factory = None
     with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
     engine = api_db._auth_engine
@@ -186,10 +192,14 @@ def test_password_change_rotates_sessions(client: TestClient) -> None:
         },
     )
     assert changed.status_code == 204, changed.text
-    # The rotated cookie authenticates; the pre-change one does not.
+    # The rotated cookie authenticates; the pre-change one does not. The
+    # stale check clears the jar and sends the old token as a raw header —
+    # httpx deprecated per-request cookies.
     assert client.get("/api/v1/auth/session").status_code == 200
+    client.cookies.clear()
     stale = client.get(
-        "/api/v1/auth/session", cookies={"__Host-session": old_cookie}
+        "/api/v1/auth/session",
+        headers={"Cookie": f"__Host-session={old_cookie}"},
     )
     assert stale.status_code == 401
 

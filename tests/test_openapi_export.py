@@ -79,7 +79,12 @@ def _accepts_anonymous(operation: dict[str, Any]) -> bool:
 def test_anonymous_operations_are_exactly_the_documented_set(
     spec: dict[str, Any],
 ) -> None:
-    """Only the seven operations named in api-design §1 accept an anonymous caller."""
+    """Exactly nine operations accept an anonymous caller.
+
+    The seven of api-design §1 plus the two B3 auth operations that mint the
+    identity (register/login) — the contract extension under review with the
+    contract owner.
+    """
     anonymous = {
         (path, method)
         for path, item in spec["paths"].items()

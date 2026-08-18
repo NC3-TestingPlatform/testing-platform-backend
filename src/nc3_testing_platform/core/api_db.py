@@ -15,6 +15,7 @@ session-touch write of the authentication dependency (`core/security.py`)
 must persist even under handlers that write nothing themselves.
 """
 
+import threading
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -28,6 +29,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from nc3_testing_platform import models as _models  # noqa: F401
 from nc3_testing_platform.core.settings import settings
 
+# FastAPI runs sync dependencies on threadpool workers, so two cold-start
+# requests can race the lazy construction; the losing engine's pool would
+# leak for the process lifetime. One lock, double-checked, covers all four
+# globals — construction happens once per process and the steady-state path
+# never contends.
+_init_lock = threading.Lock()
+
 _app_engine: sa.Engine | None = None
 _app_factory: sessionmaker[Session] | None = None
 _auth_engine: sa.Engine | None = None
@@ -38,7 +46,11 @@ def get_app_engine() -> sa.Engine:
     """The process-wide ``nc3_app`` engine, created on first use."""
     global _app_engine
     if _app_engine is None:
-        _app_engine = sa.create_engine(settings.app_database_url, pool_pre_ping=True)
+        with _init_lock:
+            if _app_engine is None:
+                _app_engine = sa.create_engine(
+                    settings.app_database_url, pool_pre_ping=True
+                )
     return _app_engine
 
 
@@ -46,9 +58,11 @@ def get_auth_engine() -> sa.Engine:
     """The process-wide ``nc3_auth`` engine, created on first use."""
     global _auth_engine
     if _auth_engine is None:
-        _auth_engine = sa.create_engine(
-            settings.auth_database_url, pool_pre_ping=True
-        )
+        with _init_lock:
+            if _auth_engine is None:
+                _auth_engine = sa.create_engine(
+                    settings.auth_database_url, pool_pre_ping=True
+                )
     return _auth_engine
 
 
@@ -68,7 +82,12 @@ def app_session() -> Iterator[Session]:
     """Request-scoped tenant session (``nc3_app``); commits on success."""
     global _app_factory
     if _app_factory is None:
-        _app_factory = sessionmaker(bind=get_app_engine())
+        # The engine is resolved before acquiring: the lock is not reentrant
+        # and get_app_engine takes it on its own cold path.
+        engine = get_app_engine()
+        with _init_lock:
+            if _app_factory is None:
+                _app_factory = sessionmaker(bind=engine)
     yield from _unit_of_work(_app_factory)
 
 
@@ -80,7 +99,11 @@ def auth_session() -> Iterator[Session]:
     """
     global _auth_factory
     if _auth_factory is None:
-        _auth_factory = sessionmaker(bind=get_auth_engine())
+        # Same non-reentrant-lock ordering as app_session.
+        engine = get_auth_engine()
+        with _init_lock:
+            if _auth_factory is None:
+                _auth_factory = sessionmaker(bind=engine)
     yield from _unit_of_work(_auth_factory)
 
 
