@@ -6,6 +6,327 @@
     "version": "4.0.1"
   },
   "paths": {
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register a platform-local account",
+        "description": "Provision the account and its workspace organization (IDR-016).\n\nThe registrant becomes `organization_admin` of a fresh workspace, and the\nconsent receipts for every active account-level statement are recorded\natomically with the account. Registration does not log in — call\n`POST /auth/login` next.",
+        "operationId": "register_api_v1_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisteredUser"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "RateLimit": {
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "Advertised quota policy, e.g. `100;w=60`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the quota resets. Sent with `429`.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log in with email and password",
+        "description": "Open a server-side session and set the `__Host-session` cookie.\n\nUnknown email, disabled account, and wrong password all answer the same\n`401`. A locked account answers `429` with `Retry-After`.",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "RateLimit": {
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "Advertised quota policy, e.g. `100;w=60`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the quota resets. Sent with `429`.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The authenticated session",
+        "description": "The current user, organization, and server-side expiry horizon.",
+        "operationId": "read_session_api_v1_auth_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log out",
+        "description": "Revoke the session server-side and clear the cookie.",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change the password",
+        "description": "Verify the current password, re-encrypt, and rotate every session.\n\nSessions on other devices are revoked; this one is replaced and the new\ncookie is set on the response (session regeneration on privilege change).",
+        "operationId": "change_password_api_v1_auth_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/scans": {
       "post": {
         "tags": [
@@ -5901,6 +6222,30 @@
         "title": "InvitationPreview",
         "description": "What an invitee can see before accepting.\n\nDeliberately thin. Anyone holding the link can read this, so it carries the\norganization's name and nothing that would leak its membership or activity."
       },
+      "LoginSubmission": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginSubmission",
+        "description": "Password login for a platform-local account."
+      },
       "Member": {
         "properties": {
           "user_id": {
@@ -6391,6 +6736,33 @@
         ],
         "title": "Page[Schedule]"
       },
+      "PasswordChangeSubmission": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Current Password",
+            "writeOnly": true
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "New Password",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordChangeSubmission",
+        "description": "Authenticated password change; requires the current password."
+      },
       "ProblemDetail": {
         "properties": {
           "type": {
@@ -6456,6 +6828,93 @@
         ],
         "title": "ProblemDetail",
         "description": "RFC 9457 problem detail."
+      },
+      "RegisteredUser": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid7",
+            "title": "User Id"
+          },
+          "organization_id": {
+            "type": "string",
+            "format": "uuid7",
+            "title": "Organization Id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "organization_role": {
+            "$ref": "#/components/schemas/OrganizationRole"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "organization_id",
+          "email",
+          "organization_role"
+        ],
+        "title": "RegisteredUser",
+        "description": "The provisioned account: the registrant administers a workspace org.\n\nPer IDR-016 the workspace organization is created at registration with\nthe registrant as `organization_admin`; the first successful DNS\nverification later promotes and names it."
+      },
+      "RegistrationSubmission": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "statement_responses": {
+            "items": {
+              "$ref": "#/components/schemas/StatementResponseSubmission"
+            },
+            "type": "array",
+            "title": "Statement Responses",
+            "description": "Answers to every active account-level acceptance statement (`GET /statements`), each named by key and exact version. Registration is refused while any is missing."
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password",
+          "statement_responses"
+        ],
+        "title": "RegistrationSubmission",
+        "description": "Lean registration: email, password, optional display name, consent."
       },
       "Report": {
         "properties": {
@@ -7837,6 +8296,72 @@
         "title": "ScheduleUpdate",
         "description": "Partial update. Omitted fields are left alone.\n\n`asset_id` is absent: repointing a schedule at another asset would attribute one\nasset's recurring history to a different one."
       },
+      "SessionInfo": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid7",
+            "title": "User Id"
+          },
+          "organization_id": {
+            "type": "string",
+            "format": "uuid7",
+            "title": "Organization Id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "organization_role": {
+            "$ref": "#/components/schemas/OrganizationRole"
+          },
+          "session_created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Session Created At"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen At"
+          },
+          "idle_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Idle Expires At"
+          },
+          "absolute_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Absolute Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "organization_id",
+          "email",
+          "organization_role",
+          "session_created_at",
+          "last_seen_at",
+          "idle_expires_at",
+          "absolute_expires_at"
+        ],
+        "title": "SessionInfo",
+        "description": "The authenticated session and its server-side expiry horizon.\n\n`idle_expires_at` moves with activity; `absolute_expires_at` never does.\nWhichever passes first ends the session (Non-functional v0.11)."
+      },
       "SeverityCounts": {
         "properties": {
           "critical": {
@@ -8391,6 +8916,12 @@
       }
     },
     "securitySchemes": {
+      "SessionCookie": {
+        "type": "apiKey",
+        "description": "Browser session cookie set by `POST /auth/login`. HttpOnly, Secure, SameSite=Lax; the session record and its idle/absolute timeouts are enforced server-side.",
+        "in": "cookie",
+        "name": "__Host-session"
+      },
       "OpenIdConnect": {
         "type": "openIdConnect",
         "description": "OpenID Connect token issued by the platform identity provider. Some operations additionally require current MFA assurance, read from the token at request time.",

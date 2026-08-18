@@ -1,27 +1,39 @@
-"""OpenAPI security schemes and the rate-limit response contract.
+"""Security schemes, the session dependency, and the rate-limit response contract.
 
-Contract-only, the identity provider itself is external.
+Since B3 (US #79) the platform is its own identity provider (Non-functional
+v0.11): registration, argon2id credentials, and sessions are platform-managed
+in `domains/auth`. Browser authentication is one server-side `user_session`
+row behind one `__Host-` cookie (IDR-010), enforced by :func:`require_session`
+— the only live gate in this module. Everything the session needs before an
+RLS context exists goes through the `auth_session_bootstrap` SECURITY DEFINER
+lookup (IDR-012).
 
-The identity provider owns identity, credentials, authentication methods,
-sessions, MFA enrollment, and current assurance; this service only projects
-an `app_user` row from a verified subject. A caller therefore presents
-either an OIDC token or a platform API key.
+The OpenID Connect and API-key schemes stay published in the contract:
+API keys remain machine-to-machine only and their verification lands with the
+API-key story, while the OIDC scheme is the federation seam of a later phase —
+v4.0 ships no SSO, so its discovery URL keeps a reserved-invalid default and
+`verify_token` stays a `NotImplementedError` seam.
 
-`auto_error` is off throughout.
-Dependencies in this module declare requirements into the published contract and enforce nothing.
-Credential verification and assurance evaluation are `NotImplementedError` seams, unwired while the application is a live mock.
+`auto_error` is off throughout. The declaration-only dependencies publish
+requirements into the contract for operations that are still live mocks.
 
-Developer note: A frontend may route calls through its own proxy backend ("BFF").
-That changes how the browser authenticates to the BFF (httpOnly session cookie),
-not this contract: the BFF calls this API as an ordinary client, presenting an
-OIDC bearer token or an API key.
+Developer note: A frontend may route calls through its own proxy backend
+("BFF"). That changes how the browser authenticates to the BFF, not this
+contract: the BFF calls this API as an ordinary client.
 """
 
+import hashlib
+from dataclasses import dataclass
+from datetime import timedelta
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import Depends
-from fastapi.security import APIKeyHeader, OpenIdConnect
+import sqlalchemy as sa
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyCookie, APIKeyHeader, OpenIdConnect
 
+from nc3_testing_platform.core import rls
+from nc3_testing_platform.core.api_db import AuthDbSession
 from nc3_testing_platform.core.errors import PROBLEM_MEDIA_TYPE, ProblemDetail
 from nc3_testing_platform.core.settings import settings
 
@@ -51,8 +63,105 @@ api_key = APIKeyHeader(
     ),
 )
 
+SESSION_COOKIE_NAME = "__Host-session"
+
+session_cookie = APIKeyCookie(
+    name=SESSION_COOKIE_NAME,
+    scheme_name="SessionCookie",
+    auto_error=False,
+    description=(
+        "Browser session cookie set by `POST /auth/login`. HttpOnly, Secure, "
+        "SameSite=Lax; the session record and its idle/absolute timeouts are "
+        "enforced server-side."
+    ),
+)
+
 OidcAuth = Annotated[str | None, Depends(oidc)]
 ApiKeyAuth = Annotated[str | None, Depends(api_key)]
+SessionAuth = Annotated[str | None, Depends(session_cookie)]
+
+# Clears the session cookie on the response that refuses it, so a browser
+# stops replaying a token the server will never accept again.
+SESSION_COOKIE_CLEAR = (
+    f'{SESSION_COOKIE_NAME}=""; HttpOnly; Max-Age=0; Path=/; '
+    "SameSite=lax; Secure"
+)
+
+
+def hash_session_token(token: str) -> bytes:
+    """The stored form of a session token: its SHA-256 digest.
+
+    A hash, not an encryption: the value must stay an index key for the
+    pre-context SECURITY DEFINER lookup, and it never needs to be reversed —
+    session rows are hard-deleted on erasure, so there is nothing to
+    crypto-shred.
+    """
+    return hashlib.sha256(token.encode("ascii")).digest()
+
+
+@dataclass(frozen=True)
+class AuthenticatedSession:
+    """The request's authenticated identity, resolved from the session cookie."""
+
+    session_id: UUID
+    user_id: UUID
+    organization_id: UUID
+
+
+# The pre-context lookup (IDR-012): runs as the nc3_auth_definer-owned
+# SECURITY DEFINER function because before identity is known no RLS arm can
+# open. Raw SQL, not the ORM model — core must not import `domains/auth`.
+_SESSION_BOOTSTRAP = sa.text(
+    "SELECT session_id, user_id, organization_id, session_created_at,"
+    " last_seen_at, revoked_at, user_disabled_at, observed_at"
+    " FROM public.auth_session_bootstrap(:token_hash)"
+)
+_SESSION_TOUCH = sa.text(
+    "UPDATE user_session SET last_seen_at = now() WHERE id = :session_id"
+)
+
+
+def _session_refused(clear_cookie: bool) -> HTTPException:
+    headers = {"Set-Cookie": SESSION_COOKIE_CLEAR} if clear_cookie else None
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated: the session is missing, expired, or revoked.",
+        headers=headers,
+    )
+
+
+def require_session(token: SessionAuth, db: AuthDbSession) -> AuthenticatedSession:
+    """Resolve the session cookie to an identity and open its RLS user arm.
+
+    Timeout policy runs application-side against the database clock returned
+    by the lookup (idle and absolute caps, Non-functional v0.11); the
+    `last_seen_at` touch is an in-policy UPDATE under the user context, never
+    a definer write. Every failure answers `401` and clears the cookie.
+    """
+    if not token:
+        raise _session_refused(clear_cookie=False)
+    row = db.execute(
+        _SESSION_BOOTSTRAP, {"token_hash": hash_session_token(token)}
+    ).one_or_none()
+    if row is None or row.revoked_at is not None or row.user_disabled_at is not None:
+        raise _session_refused(clear_cookie=True)
+    idle = timedelta(seconds=settings.auth_session_idle_seconds)
+    absolute = timedelta(seconds=settings.auth_session_absolute_seconds)
+    if (
+        row.observed_at - row.session_created_at >= absolute
+        or row.observed_at - row.last_seen_at >= idle
+    ):
+        raise _session_refused(clear_cookie=True)
+    rls.set_user_context(db, row.user_id)
+    db.execute(_SESSION_TOUCH, {"session_id": row.session_id})
+    return AuthenticatedSession(
+        session_id=row.session_id,
+        user_id=row.user_id,
+        organization_id=row.organization_id,
+    )
+
+
+CurrentSession = Annotated[AuthenticatedSession, Depends(require_session)]
 
 
 def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:

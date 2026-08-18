@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     app_database_url: str = (
         "postgresql+psycopg://nc3_app:nc3_app@localhost:5432/nc3_testing_platform"
     )
+    # The credential-surface connection (core/api_db.py): the `nc3_auth` role,
+    # held by the API service alone so the scan workers sharing `nc3_app`
+    # never gain a privilege on the auth tables (docs/database-roles.md,
+    # US #79). Same raw-interpolation caveat as `app_database_url`.
+    auth_database_url: str = (
+        "postgresql+psycopg://nc3_auth:nc3_auth@localhost:5432/nc3_testing_platform"
+    )
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "amqp://rabbitmq:rabbitmq@localhost:5672//"
 
@@ -160,6 +167,60 @@ class Settings(BaseSettings):
     # everywhere except in a worker container, where compose pins it; preflight
     # rejects a worker that cannot name its queue.
     worker_queue: str = ""
+
+    # Authentication (domains/auth, B3 / US #79). The master key is the
+    # deployment secret at the root of the envelope hierarchy (data-model
+    # §1.2): 64 hex characters (256 bits), normally supplied as
+    # APP_ENCRYPTION_MASTER_KEY_FILE=/run/secrets/app_encryption_master_key
+    # and mounted into the api service only. Empty means the operations that
+    # need it refuse loudly (core/crypto.py) — never a plaintext fallback.
+    # Only the version string is ever stored in PostgreSQL.
+    app_encryption_master_key: str = ""
+    app_encryption_master_key_version: str = "1"
+
+    # Browser origin allowed to make cookie-bearing state changes
+    # (core/csrf.py, IDR-010's origin-validation arm). Empty disables the
+    # check, for non-browser and development use.
+    auth_public_origin: str = ""
+
+    # Server-side session policy (Non-functional v0.11: idle 30 min,
+    # absolute 8 h) and the login lockout + rate limits of the brute-force
+    # requirement. Windows and thresholds are per IP for the Redis limits;
+    # the lockout is per account and lives on the credential row.
+    auth_session_idle_seconds: int = Field(default=1800, ge=60)
+    auth_session_absolute_seconds: int = Field(default=28800, ge=300)
+    auth_lockout_threshold: int = Field(default=10, ge=1)
+    auth_lockout_seconds: int = Field(default=900, ge=60)
+    auth_login_rate_limit: int = Field(default=10, ge=1)
+    auth_login_rate_window_seconds: int = Field(default=60, ge=1)
+    auth_register_rate_limit: int = Field(default=10, ge=1)
+    auth_register_rate_window_seconds: int = Field(default=3600, ge=1)
+
+    @model_validator(mode="after")
+    def _auth_settings_are_coherent(self) -> "Settings":
+        """Refuse a key that is not 256-bit hex and an absolute cap under idle.
+
+        The key check runs at startup so a truncated or re-encoded secret
+        fails before the first registration, not during it.
+        """
+        if self.app_encryption_master_key:
+            try:
+                raw = bytes.fromhex(self.app_encryption_master_key)
+            except ValueError:
+                raise ValueError(
+                    "APP_ENCRYPTION_MASTER_KEY must be hexadecimal."
+                ) from None
+            if len(raw) != 32:
+                raise ValueError(
+                    "APP_ENCRYPTION_MASTER_KEY must be 64 hex characters "
+                    "(256 bits)."
+                )
+        if self.auth_session_absolute_seconds < self.auth_session_idle_seconds:
+            raise ValueError(
+                "AUTH_SESSION_ABSOLUTE_SECONDS must be at least "
+                "AUTH_SESSION_IDLE_SECONDS."
+            )
+        return self
 
     @classmethod
     def settings_customise_sources(

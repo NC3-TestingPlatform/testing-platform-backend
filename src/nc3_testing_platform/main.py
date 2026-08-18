@@ -5,6 +5,7 @@ Domains are mounted under `/api/v1`.
 
 from fastapi import APIRouter, FastAPI
 
+from nc3_testing_platform.core.csrf import OriginCheckMiddleware
 from nc3_testing_platform.core.errors import (
     configure_openapi,
     register_exception_handlers,
@@ -14,6 +15,7 @@ from nc3_testing_platform.domains.admin.router import router as admin_router
 from nc3_testing_platform.domains.api_keys.router import router as api_keys_router
 from nc3_testing_platform.domains.assets.router import public_feed_router
 from nc3_testing_platform.domains.assets.router import router as assets_router
+from nc3_testing_platform.domains.auth.router import router as auth_router
 from nc3_testing_platform.domains.findings.router import router as findings_router
 from nc3_testing_platform.domains.health.router import router as health_router
 from nc3_testing_platform.domains.notifications.router import account_router
@@ -47,6 +49,10 @@ app = FastAPI(
 register_exception_handlers(app)
 configure_openapi(app)
 
+# CSRF origin validation (IDR-010): pure ASGI, so the SSE route streams
+# through untouched. Inert until AUTH_PUBLIC_ORIGIN is set.
+app.add_middleware(OriginCheckMiddleware)
+
 # Referenced only from handwritten schema — the launch variants from the
 # media-type-dispatched request body on `POST /scans`, and the event payloads from
 # the `text/event-stream` response — so FastAPI's own pass never sees them.
@@ -62,6 +68,7 @@ register_component_schemas(
 )
 
 api_v1 = APIRouter(prefix="/api/v1")
+api_v1.include_router(auth_router)
 api_v1.include_router(scans_router)
 api_v1.include_router(assets_router)
 api_v1.include_router(public_feed_router)
