@@ -27,6 +27,19 @@ provisionally (decision 2026-08-18):
 
 The DPO's v4 texts land later as NEW version rows (retiring these), never as
 edits. Same NO FORCE wrap as the seed (docs/database-migrations.md).
+
+The snapshots are verbatim, defects included: the live pages carry a
+truncated sentence ("…the company name and full."), a mistyped
+privacy-policy link (testing.c3.lu), and a malformed survival clause — all
+routed to the site owner/DPO. Fixing them here would make receipts attest to
+a text nobody was shown; the fixed pages arrive as new snapshots and new
+version rows.
+
+Downgrade refuses while any consent receipt references these statements:
+deleting the privacy row would fail on its FK anyway, and rewriting the
+terms row would silently invalidate the text identity recorded consent
+attests to. A development database in that state is wiped, not downgraded
+(docs/database-migrations.md wipe rules).
 """
 
 from collections.abc import Sequence
@@ -82,7 +95,33 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Revert this revision."""
+    """Revert this revision; refused while consent receipts exist."""
+    # The count must run with FORCE lifted: on a non-superuser owner the
+    # receipts table's policies would otherwise hide every row and the guard
+    # would silently pass (docs/database-migrations.md). A raised exception
+    # aborts the transaction, so the lift never outlives a refusal.
+    op.execute("ALTER TABLE statement_response NO FORCE ROW LEVEL SECURITY")
+    op.execute(
+        f"""
+        DO $$
+        DECLARE
+            receipts bigint;
+        BEGIN
+            SELECT count(*) INTO receipts
+            FROM statement_response
+            WHERE statement_id IN ('{_TERMS_ID}', '{_PRIVACY_ID}');
+            IF receipts > 0 THEN
+                RAISE EXCEPTION 'refusing downgrade: % consent receipt(s) '
+                    'attest to these statement versions — deleting or '
+                    'rewriting them would invalidate recorded consent. Wipe '
+                    'the development database instead '
+                    '(docs/database-migrations.md wipe rules)', receipts;
+            END IF;
+        END
+        $$;
+        """
+    )
+    op.execute("ALTER TABLE statement_response FORCE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE statement NO FORCE ROW LEVEL SECURITY")
     op.execute(f"DELETE FROM statement WHERE id = '{_PRIVACY_ID}'")
     op.execute(
