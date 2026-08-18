@@ -2,7 +2,7 @@
 
 No live database here (repo convention): a recording stand-in captures what
 each helper executes, and the assertions pin the contract the policies depend
-on — parameterised ``set_config(..., true)``, every helper writing all three
+on — one parameterised ``set_config(..., true)`` statement carrying all three
 GUCs, and ``None`` serialised as the empty string (a GUC cannot hold NULL;
 `NULLIF(..., '')` in the policies makes '' deny like never-set). The live
 behaviour — deny on missing context, no leak across pooled transactions — is
@@ -14,6 +14,12 @@ import uuid
 import pytest
 
 from nc3_testing_platform.core import rls
+
+_EXPECTED_SQL = (
+    "SELECT set_config(:org_name, :org, true),"
+    " set_config(:user_name, :user_value, true),"
+    " set_config(:job_name, :job, true)"
+)
 
 
 class RecordingSession:
@@ -28,17 +34,18 @@ class RecordingSession:
 
 
 def _gucs(session: RecordingSession) -> dict[str, str]:
-    """The final value each GUC was set to, by name."""
-    return {params["name"]: params["value"] for _, params in session.calls}
-
-
-def test_every_statement_is_parameterised_set_config_local() -> None:
-    """The emitted SQL is the one parameterised, transaction-local form."""
-    session = RecordingSession()
-    rls.set_org_context(session, uuid.uuid4())  # type: ignore[arg-type]
-    for sql, params in session.calls:
-        assert sql == "SELECT set_config(:name, :value, true)"
-        assert set(params) == {"name", "value"}
+    """The value assigned to each GUC by the helper's single statement."""
+    assert len(session.calls) == 1, "the context must cost one round trip"
+    sql, params = session.calls[0]
+    assert sql == _EXPECTED_SQL
+    assert params["org_name"] == rls.ORG_GUC
+    assert params["user_name"] == rls.USER_GUC
+    assert params["job_name"] == rls.JOB_GUC
+    return {
+        rls.ORG_GUC: params["org"],
+        rls.USER_GUC: params["user_value"],
+        rls.JOB_GUC: params["job"],
+    }
 
 
 def test_org_context_sets_org_and_clears_the_rest() -> None:
@@ -95,11 +102,10 @@ def test_stacked_contexts_leave_no_residual_arm() -> None:
     rls.set_org_context(session, uuid.uuid4(), user_id=uuid.uuid4())  # type: ignore[arg-type]
     job = uuid.uuid4()
     rls.set_guest_job_context(session, job)  # type: ignore[arg-type]
-    assert _gucs(session) == {
-        rls.ORG_GUC: "",
-        rls.USER_GUC: "",
-        rls.JOB_GUC: str(job),
-    }
+    _, params = session.calls[-1]
+    assert params["org"] == ""
+    assert params["user_value"] == ""
+    assert params["job"] == str(job)
 
 
 @pytest.mark.parametrize(

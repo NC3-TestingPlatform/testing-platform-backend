@@ -47,7 +47,9 @@ def _role_url(role: str, env_name: str) -> str:
     explicit = os.getenv(env_name)
     if explicit:
         return explicit
-    assert _OWNER_URL is not None
+    if not _OWNER_URL:
+        # Tests that request only a role engine must skip like the rest.
+        pytest.skip("DATABASE_URL not set")
     derived = sa.engine.make_url(_OWNER_URL).set(username=role, password=role)
     # str(URL) masks the password as '***'; render it usable.
     return derived.render_as_string(hide_password=False)
@@ -525,26 +527,55 @@ def test_platform_role_is_confined_to_its_duty_allowlist(
             unit.execute(sa.text(statement))
 
 
+_AUDIT_INSERT = sa.text(
+    """
+    INSERT INTO audit_event
+        (id, chain_id, sequence_number, event_type, detail, occurred_at,
+         entry_hash, retention_until, organization_id)
+    VALUES
+        (:id, :chain, 1, 'iso.test', '{"kind": "iso-test"}'::jsonb, now(),
+         'iso-test-hash', now() + interval '1 day', :org)
+    """
+)
+
+
+def _audit_params(org: uuid.UUID | None) -> dict[str, str | None]:
+    return {
+        "id": str(uuid.uuid4()),
+        "chain": uuid.uuid4().hex,
+        "org": None if org is None else str(org),
+    }
+
+
 def test_both_runtime_roles_may_append_audit_events(
     app_engine: sa.Engine, platform_engine: sa.Engine
 ) -> None:
-    """audit_append accepts rows carrying org, user, or neither.
+    """Org-less appends (guest and user-scoped events) pass for both roles.
 
     Raw INSERT without RETURNING: audit_event deliberately has no SELECT
     policy, and PostgreSQL applies SELECT policies to RETURNING rows — the
     future audit writer must not use RETURNING either.
     """
-    insert = sa.text(
-        """
-        INSERT INTO audit_event
-            (id, chain_id, sequence_number, event_type, detail, occurred_at,
-             entry_hash, retention_until)
-        VALUES
-            (:id, :chain, 1, 'iso.test', '{"kind": "iso-test"}'::jsonb, now(),
-             'iso-test-hash', now() + interval '1 day')
-        """
-    )
     for engine in (app_engine, platform_engine):
         with Session(engine) as unit:
-            unit.execute(insert, {"id": str(uuid.uuid4()), "chain": uuid.uuid4().hex})
+            unit.execute(_AUDIT_INSERT, _audit_params(None))
             unit.rollback()  # append-only table: leave nothing behind
+
+
+def test_audit_appends_cannot_spoof_another_org(
+    app_engine: sa.Engine, seed: Seed
+) -> None:
+    """nc3_app's audit arm binds organization_id to the asserted context.
+
+    An audit row can never be corrected in-band (no UPDATE/DELETE grant, no
+    SELECT policy), so cross-tenant pollution would be permanent — the policy
+    refuses it at the door. The own-org append still passes.
+    """
+    with Session(app_engine) as unit:
+        rls.set_org_context(unit, seed.org_a)
+        with pytest.raises(ProgrammingError, match="row-level security"):
+            unit.execute(_AUDIT_INSERT, _audit_params(seed.org_b))
+    with Session(app_engine) as unit:
+        rls.set_org_context(unit, seed.org_a)
+        unit.execute(_AUDIT_INSERT, _audit_params(seed.org_a))
+        unit.rollback()

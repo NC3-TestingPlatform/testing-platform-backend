@@ -35,10 +35,11 @@ NULL/'' and every predicate below then denies with an empty result:
   file_upload                     the owning scan_job (no direct job column)
   statement                       reference data (versioned legal text): read
                                   for nc3_app, writes stay with the owner
-  audit_event                     INSERT-only for both roles, rows carrying
-                                  org, user, or neither; no SELECT policy —
-                                  the platform-admin read is out-of-band in
-                                  v4.0 (Non-functional → Roles)
+  audit_event                     INSERT-only: nc3_app bound to the asserted
+                                  org context (org-less rows pass), app_platform
+                                  unconstrained; no SELECT policy — the
+                                  platform-admin read is out-of-band in v4.0
+                                  (Non-functional → Roles)
 
 The EXISTS arms nest acyclically (finding → scan_result → scan_task; the
 referenced tables' own policies apply inside the subquery and agree under the
@@ -213,13 +214,21 @@ def upgrade() -> None:
     op.execute(
         "CREATE POLICY reference_read ON statement FOR SELECT TO nc3_app USING (true)"
     )
-    # audit_event accepts appends carrying org, user, or neither (guest and
-    # platform events) from both runtime roles; reads have no policy — the
-    # v4.0 platform-admin read is an out-of-band operator procedure, and
-    # UPDATE/DELETE are already revoked at the grant layer (fa547b13b972).
+    # audit_event appends: reads have no policy — the v4.0 platform-admin
+    # read is an out-of-band operator procedure — and UPDATE/DELETE are
+    # already revoked at the grant layer (fa547b13b972), so a spoofed row
+    # could never be corrected in-band. The tenant arm therefore binds the
+    # only attribution column the row has to the asserted context: user
+    # identity lives exclusively inside payload_encrypted (§12.1), and rows
+    # with no organization (guest and user-scoped events) pass either way.
+    # Platform events keep the unconstrained arm on the platform role.
     op.execute(
-        "CREATE POLICY audit_append ON audit_event FOR INSERT "
-        "TO nc3_app, app_platform WITH CHECK (true)"
+        "CREATE POLICY audit_append_app ON audit_event FOR INSERT TO nc3_app "
+        f"WITH CHECK (organization_id IS NULL OR organization_id = {_ORG})"
+    )
+    op.execute(
+        "CREATE POLICY audit_append_platform ON audit_event FOR INSERT "
+        "TO app_platform WITH CHECK (true)"
     )
 
     # --- app_platform duty policies (row scope for the duty grants above).
@@ -321,7 +330,8 @@ def downgrade() -> None:
         op.execute(f"DROP POLICY IF EXISTS platform_duty_select ON {table}")
         op.execute(f"DROP POLICY IF EXISTS platform_duty_update ON {table}")
         op.execute(f"DROP POLICY IF EXISTS platform_duty_insert ON {table}")
-    op.execute("DROP POLICY IF EXISTS audit_append ON audit_event")
+    op.execute("DROP POLICY IF EXISTS audit_append_app ON audit_event")
+    op.execute("DROP POLICY IF EXISTS audit_append_platform ON audit_event")
     op.execute("DROP POLICY IF EXISTS reference_read ON statement")
     for table in _TENANT_PREDICATES:
         op.execute(f"DROP POLICY IF EXISTS tenant_rows ON {table}")

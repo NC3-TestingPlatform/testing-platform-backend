@@ -35,12 +35,31 @@ ORG_GUC = "app.current_org"
 USER_GUC = "app.current_user"
 JOB_GUC = "app.current_job"
 
-_SET_CONFIG = sa.text("SELECT set_config(:name, :value, true)")
+# One statement for all three GUCs: the context costs one database round trip
+# per transaction, not three.
+_SET_CONTEXT = sa.text(
+    "SELECT set_config(:org_name, :org, true),"
+    " set_config(:user_name, :user_value, true),"
+    " set_config(:job_name, :job, true)"
+)
 
 
-def _set(session: Session, name: str, value: uuid.UUID | None) -> None:
+def _set_all(
+    session: Session,
+    org: uuid.UUID | None,
+    user: uuid.UUID | None,
+    job: uuid.UUID | None,
+) -> None:
     session.execute(
-        _SET_CONFIG, {"name": name, "value": "" if value is None else str(value)}
+        _SET_CONTEXT,
+        {
+            "org_name": ORG_GUC,
+            "org": "" if org is None else str(org),
+            "user_name": USER_GUC,
+            "user_value": "" if user is None else str(user),
+            "job_name": JOB_GUC,
+            "job": "" if job is None else str(job),
+        },
     )
 
 
@@ -58,9 +77,7 @@ def set_org_context(
     """
     if org_id is None:
         raise ValueError("org_id is required; use set_guest_job_context for guests")
-    _set(session, ORG_GUC, org_id)
-    _set(session, USER_GUC, user_id)
-    _set(session, JOB_GUC, None)
+    _set_all(session, org_id, user_id, None)
 
 
 def set_user_context(session: Session, user_id: uuid.UUID) -> None:
@@ -72,9 +89,7 @@ def set_user_context(session: Session, user_id: uuid.UUID) -> None:
     """
     if user_id is None:
         raise ValueError("user_id is required")
-    _set(session, ORG_GUC, None)
-    _set(session, USER_GUC, user_id)
-    _set(session, JOB_GUC, None)
+    _set_all(session, None, user_id, None)
 
 
 def set_guest_job_context(session: Session, job_id: uuid.UUID) -> None:
@@ -90,6 +105,4 @@ def set_guest_job_context(session: Session, job_id: uuid.UUID) -> None:
     """
     if job_id is None:
         raise ValueError("job_id is required")
-    _set(session, ORG_GUC, None)
-    _set(session, USER_GUC, None)
-    _set(session, JOB_GUC, job_id)
+    _set_all(session, None, None, job_id)

@@ -195,6 +195,15 @@ jobs:
       - name: Apply migrations inside the stack
         run: make migrate
 
+      # The runtime roles are created by the migrations without credentials;
+      # give them the dev-default passwords the compose URLs interpolate
+      # (docs/database-roles.md) — the seed and the workers connect as them.
+      - name: Bootstrap the runtime role credentials
+        run: |
+          docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
+            -c "ALTER ROLE nc3_app PASSWORD 'nc3_app'" \
+            -c "ALTER ROLE app_platform PASSWORD 'app_platform'"
+
       - name: Scan round trip lands in PostgreSQL
         run: |
           # Seeds a guest job with one web.noop task and dispatches it

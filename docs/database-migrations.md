@@ -89,9 +89,13 @@ Autogenerate proposes; you decide. Before committing one:
   not a superuser, a seed/backfill revision touching tenant rows is itself
   subject to the policies (no GUC context ⇒ zero rows). Such a revision must
   wrap its DML in `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` /
-  re-`FORCE`, in the same transaction. The dev/CI owner is the `postgres`
-  superuser, which bypasses RLS — so this failure mode only appears on
-  hardened deployments; do not rely on dev behaviour.
+  re-`FORCE`, in the same transaction. Mind the cost: `NO FORCE` takes an
+  `ACCESS EXCLUSIVE` lock that is then held through the whole backfill until
+  the revision commits, blocking every reader and writer of the table — and
+  concurrent owner sessions see all rows for that window. Batch such
+  revisions into a maintenance window, or split the DML per table so each
+  lock is short. The dev/CI owner is the `postgres` superuser, which bypasses
+  RLS — so none of this appears in dev; do not rely on dev behaviour.
 
 ## Wipe rules
 

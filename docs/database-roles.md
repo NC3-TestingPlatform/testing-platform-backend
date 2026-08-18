@@ -26,7 +26,10 @@ a new statement version and a new response; an audit event is never touched.
 `audit_event` additionally has no `SELECT` *policy* for either runtime role —
 the v4.0 platform-admin audit read is an out-of-band operator procedure
 (Non-functional → Roles). Because of that, audit inserts must not use
-`RETURNING`: PostgreSQL applies SELECT policies to returned rows.
+`RETURNING`: PostgreSQL applies SELECT policies to returned rows. And because
+an audit row can never be corrected in-band, `nc3_app`'s INSERT arm binds
+`organization_id` to the asserted org context (org-less rows — guest and
+user-scoped events — pass); only `app_platform` appends unconstrained.
 
 `alembic_version` is revoked entirely from both runtime roles: the runtime
 has no business reading or writing migration state.
@@ -78,12 +81,14 @@ membership, and finally validates the role's *effective* privileges
 `LOGIN` but no credential; each environment sets its own:
 
 - **Development**: `NC3_APP_DB_PASSWORD` and `NC3_PLATFORM_DB_PASSWORD` in
-  `.env` (see `.env.example`), applied once per PostgreSQL cluster:
+  `.env` (see `.env.example`), applied once per PostgreSQL cluster — the
+  `ALTER ROLE` must set the same values the compose URLs interpolate:
 
   ```bash
+  set -a; . ./.env; set +a
   docker compose exec postgres psql -U postgres -d nc3_testing_platform \
-    -c "ALTER ROLE nc3_app PASSWORD 'nc3_app'" \
-    -c "ALTER ROLE app_platform PASSWORD 'app_platform'"
+    -c "ALTER ROLE nc3_app PASSWORD '${NC3_APP_DB_PASSWORD}'" \
+    -c "ALTER ROLE app_platform PASSWORD '${NC3_PLATFORM_DB_PASSWORD}'"
   ```
 
 - **Dokploy**: set both variables in the application's environment tab and
@@ -92,9 +97,11 @@ membership, and finally validates the role's *effective* privileges
 The API and worker services carry `APP_DATABASE_URL`; `worker/db.py` reads it
 (via `settings.app_database_url`). Which role the credential names is compose
 topology: the api and scan-worker services get `nc3_app`, worker-platform and
-beat get `app_platform` (override `PLATFORM_DATABASE_URL` if the password
-needs percent-encoding). `DATABASE_URL` stays the owning role, for Alembic
-and `make db-*` only — the application never connects with it.
+beat get `app_platform`. `PLATFORM_DATABASE_URL` is a **Compose interpolation
+variable only** — the platform services map it into their `APP_DATABASE_URL`;
+`Settings` never reads it directly — set it when the platform password needs
+percent-encoding. `DATABASE_URL` stays the owning role, for Alembic and
+`make db-*` only — the application never connects with it.
 
 ## Rules for future revisions
 
