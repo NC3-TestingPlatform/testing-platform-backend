@@ -47,10 +47,19 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
-      # Runtime role connection (docs/database-roles.md); unused until the session layer lands (B5).
+      # Runtime role connection (docs/database-roles.md).
       # The password is interpolated raw: if it contains URL-reserved characters
       # (@ : / % ? #), also set APP_DATABASE_URL with it percent-encoded.
       APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
+      # Credential-surface connection (B3, docs/database-roles.md): the api
+      # service alone holds nc3_auth; no worker service gets this variable.
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql+psycopg://nc3_auth:${NC3_AUTH_DB_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
+      # Envelope master key (data-model §1.2) — api only, never the workers.
+      # Set the value in Dokploy's environment tab, or mount a secret file and
+      # point APP_ENCRYPTION_MASTER_KEY_FILE at it.
+      APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:?}
+      # Browser origin for the CSRF origin check (core/csrf.py).
+      AUTH_PUBLIC_ORIGIN: ${AUTH_PUBLIC_ORIGIN:-}
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672//
       REDIS_URL: redis://redis:6379/0
       OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}

@@ -10,6 +10,7 @@ from nc3_testing_platform.core.db import Base
 from nc3_testing_platform.domains.admin import models as admin_models
 from nc3_testing_platform.domains.api_keys import models as api_keys_models
 from nc3_testing_platform.domains.assets import models as assets_models
+from nc3_testing_platform.domains.auth import models as auth_models
 from nc3_testing_platform.domains.findings import models as findings_models
 from nc3_testing_platform.domains.notifications import models as notifications_models
 from nc3_testing_platform.domains.org import models as org_models
@@ -23,6 +24,7 @@ __all__ = [
     "admin_models",
     "api_keys_models",
     "assets_models",
+    "auth_models",
     "findings_models",
     "notifications_models",
     "org_models",

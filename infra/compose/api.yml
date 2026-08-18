@@ -17,6 +17,14 @@ services:
       # The password is interpolated raw: if it contains URL-reserved characters
       # (@ : / % ? #), set APP_DATABASE_URL directly with it percent-encoded.
       APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:-nc3_app}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
+      # Credential-surface connection (B3, docs/database-roles.md): the api
+      # service alone holds nc3_auth; no worker service gets this variable.
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql+psycopg://nc3_auth:${NC3_AUTH_DB_PASSWORD:-nc3_auth}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
+      # Envelope master key (data-model §1.2) — api only, never the workers.
+      # Development value from .env; production mounts a secret file and sets
+      # APP_ENCRYPTION_MASTER_KEY_FILE instead.
+      APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:-}
+      AUTH_PUBLIC_ORIGIN: ${AUTH_PUBLIC_ORIGIN:-}
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
       REDIS_URL: redis://redis:6379/0
       # Service hostname, not localhost: the API reaches Rauthy over the

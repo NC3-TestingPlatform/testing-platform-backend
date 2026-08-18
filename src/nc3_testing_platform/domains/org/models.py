@@ -38,11 +38,20 @@ class Organization(Base):
 class AppUser(Base):
     """The single local user entity (§3.2).
 
-    The identity provider stays the system of record for identity, credentials,
-    sessions, and MFA; this row stores platform-owned fields only.
+    Since B3 (US #79) the platform is the identity provider: this row is the
+    identity projection (`identity_subject` keys issuer + subject; local
+    accounts use `local:<user id>`), while credentials and sessions live in
+    the user-private tables of `domains/auth` — never here, because this row
+    is visible org-wide for member management (IDR-012).
     """
 
     __tablename__ = "app_user"
+    __table_args__ = (
+        # B3: one account per email, case-insensitive. The application
+        # lowercases at the boundary; the expression index enforces it at
+        # the root and backs the `auth_login_lookup` definer function.
+        sa.Index("uq_app_user_email_lower", sa.text("lower(email)"), unique=True),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
