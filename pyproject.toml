@@ -71,9 +71,11 @@ convention = "google"
 testpaths = ["tests"]
 markers = [
     "redis: needs a real Redis at REDIS_URL (deselected by default; CI runs it against a service container)",
+    "postgres: needs a live PostgreSQL at DATABASE_URL with the migrations and runtime roles applied (deselected by default; CI runs it in the Migration round trip job)",
 ]
-# The default run needs no services; `pytest -m redis` (a later -m wins) opts in.
-addopts = '-m "not redis"'
+# The default run needs no services; `pytest -m redis` / `-m postgres`
+# (a later -m wins) opts in.
+addopts = '-m "not redis and not postgres"'
 
 # Coverage is deliberately *not* in `addopts`: the default run stays fast and
 # service-free, and the gate is a separate CI step (US #77 task #206). It is

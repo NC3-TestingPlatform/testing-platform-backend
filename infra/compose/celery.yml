@@ -22,8 +22,11 @@ x-worker: &worker
   environment: &worker-env
     CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}
-    # Runtime role connection (docs/database-roles.md). Unused until the
-    # session layer lands (B5); wired now so that work changes code, not compose.
+    # Runtime role connection (docs/database-roles.md): what worker/db.py
+    # connects with since B5. This anchor carries the tenant role `nc3_app`
+    # for the scan queues; worker-platform and beat override it below with the
+    # `app_platform` duty role (IDR-012 — role separation is fixed per
+    # service, never selected in code).
     # The password is interpolated raw: if it contains URL-reserved characters
     # (@ : / % ? #), set APP_DATABASE_URL directly with it percent-encoded.
     APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql+psycopg://nc3_app:${NC3_APP_DB_PASSWORD:-nc3_app}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
@@ -124,6 +127,12 @@ services:
     build:
       context: ../..
       target: worker-platform
+    environment:
+      <<: *worker-env
+      # The platform queue's duties (dispatch, reaper, heartbeat, seed tool)
+      # are cross-organization by nature: they run as `app_platform`, whose
+      # per-duty allowlist policies replace the tenant GUC arms (IDR-012).
+      APP_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://app_platform:${NC3_PLATFORM_DB_PASSWORD:-app_platform}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
     command:
       - celery
       - -A
@@ -145,6 +154,12 @@ services:
     # Exactly one replica: a second beat double-publishes every periodic task.
     # No healthcheck: beat exposes no control queue to ping.
     image: nc3-testing-platform-worker-platform:local
+    environment:
+      <<: *worker-env
+      # Beat only schedules and never opens a session, but it runs on the
+      # platform image: keep its credential the platform one so it can never
+      # silently become a tenant-role DB client.
+      APP_DATABASE_URL: ${PLATFORM_DATABASE_URL:-postgresql+psycopg://app_platform:${NC3_PLATFORM_DB_PASSWORD:-app_platform}@postgres:5432/${POSTGRES_DB:-nc3_testing_platform}}
     command:
       - celery
       - -A

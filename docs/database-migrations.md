@@ -78,8 +78,24 @@ Autogenerate proposes; you decide. Before committing one:
   notices them missing. The `nc3_app` role and its grants are hand-written
   operations (see the `nc3_app role and grants` revision and
   [database-roles.md](database-roles.md)); every revision that creates a table
-  must `GRANT` on it by hand in the same revision. RLS policies (B5) will
-  follow the same rule.
+  must `GRANT` on it by hand in the same revision. RLS policies follow the
+  same rule (the `RLS policies and app_platform role` revision): a new table
+  needs `ENABLE` + `FORCE ROW LEVEL SECURITY` and a classified policy in its
+  own revision — the RLS revision's closing gate refuses the next round trip
+  on any application table left without them, and the isolation suite
+  (`pytest -m postgres`) is the behavioral regression gate.
+- **FORCE RLS and owner-role data migrations.** Every application table
+  carries `FORCE ROW LEVEL SECURITY`, so on a deployment whose owning role is
+  not a superuser, a seed/backfill revision touching tenant rows is itself
+  subject to the policies (no GUC context ⇒ zero rows). Such a revision must
+  wrap its DML in `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` /
+  re-`FORCE`, in the same transaction. Mind the cost: `NO FORCE` takes an
+  `ACCESS EXCLUSIVE` lock that is then held through the whole backfill until
+  the revision commits, blocking every reader and writer of the table — and
+  concurrent owner sessions see all rows for that window. Batch such
+  revisions into a maintenance window, or split the DML per table so each
+  lock is short. The dev/CI owner is the `postgres` superuser, which bypasses
+  RLS — so none of this appears in dev; do not rely on dev behaviour.
 
 ## Wipe rules
 

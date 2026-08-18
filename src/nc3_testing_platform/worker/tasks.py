@@ -31,7 +31,9 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 
 import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
+from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.enums import ScanJobStatus, ScanTaskStatus
 from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.domains.assets.models import Asset
@@ -68,12 +70,35 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _set_hint_context(
+    unit: Session, org_id: str | None, scan_job_id: str | None
+) -> None:
+    """Open the RLS arm the task-payload hint names — or none at all.
+
+    Hint-then-verify (IDR-012): the hint only *selects* the policy arm; the
+    row load under that policy is the verification. A forged or missing hint
+    opens the wrong arm (or none), the load returns zero rows, and the task
+    aborts having written nothing. On the platform queue the connection role
+    is ``app_platform``, whose duty policies read no GUC — setting a context
+    there is a harmless no-op, so the call sites stay uniform.
+    """
+    if org_id is not None:
+        rls.set_org_context(unit, uuid.UUID(org_id))
+    elif scan_job_id is not None:
+        rls.set_guest_job_context(unit, uuid.UUID(scan_job_id))
+
+
 def _finalize_and_publish(
-    job_id: uuid.UUID, *, reason_override: str | None = None
+    job_id: uuid.UUID,
+    *,
+    org_hint: str | None = None,
+    job_hint: str | None = None,
+    reason_override: str | None = None,
 ) -> None:
     """Close the job if all children are terminal; publish only what committed."""
     now = _now()
     with session() as unit:
+        _set_hint_context(unit, org_hint, job_hint)
         outcome = orchestration.finalize_job_if_done(
             unit, job_id, now=now, reason_override=reason_override
         )
@@ -100,6 +125,7 @@ def dispatch(job_id: str) -> int:
     now = _now()
     job_uuid = uuid.UUID(job_id)
     announce_running = False
+    org_hint: str | None = None
     to_publish: list[tuple[uuid.UUID, str]] = []
     with session() as unit:
         # FOR UPDATE: dispatch is redelivered by design (reaper republish),
@@ -113,6 +139,12 @@ def dispatch(job_id: str) -> int:
             return 0
         if job.status in orchestration.TERMINAL_JOB_STATUSES:
             return 0
+        # The children's RLS hint (hint-then-verify, IDR-012): dispatch runs
+        # as app_platform and may read any job; the scan workers run as
+        # nc3_app and can only load rows their hinted context reaches.
+        org_hint = (
+            str(job.organization_id) if job.organization_id is not None else None
+        )
         tasks = (
             unit.execute(sa.select(ScanTask).where(ScanTask.scan_job_id == job.id))
             .scalars()
@@ -154,7 +186,7 @@ def dispatch(job_id: str) -> int:
         # revokes by it, and no second identifier is stored anywhere.
         app.send_task(
             "scan.run_module",
-            args=(str(task_id),),
+            args=(str(task_id), org_hint, job_id),
             queue=queue,
             task_id=str(task_id),
         )
@@ -165,7 +197,9 @@ def dispatch(job_id: str) -> int:
 
 
 @app.task(name="scan.run_module")
-def run_module(task_id: str) -> str:
+def run_module(
+    task_id: str, org_id: str | None = None, scan_job_id: str | None = None
+) -> str:
     """Execute one scan task end to end on this worker's egress queue.
 
     Claim the row, gate it against the roster and this worker's queue, run
@@ -174,8 +208,17 @@ def run_module(task_id: str) -> str:
     honored at the two safe points: before the run starts and before the
     result is written — a canceled task never gains a result (§7.2).
 
+    The org/job hints select this worker's RLS arm (hint-then-verify,
+    IDR-012): the claim below runs *under the policy*, so a forged or missing
+    hint loads zero rows and the delivery is dropped having written nothing —
+    which is also the fate of a pre-B5 payload without hints.
+
     :param task_id: The `scan_task.id`, which is also this delivery's queue
         task id.
+    :param org_id: The owning `scan_job.organization_id`, or ``None`` for a
+        guest job.
+    :param scan_job_id: The owning `scan_job.id` — the guest arm's key when
+        ``org_id`` is ``None``.
     :return: The task's final status value, for the worker log.
     """
     now = _now()
@@ -183,13 +226,16 @@ def run_module(task_id: str) -> str:
 
     # Phase 1 — claim the task and resolve its input; no engine work yet.
     with session() as unit:
+        _set_hint_context(unit, org_id, scan_job_id)
         # FOR UPDATE: a re-published task can be delivered twice; the lock
         # makes the queued-status check a real claim, not a race.
         task = unit.execute(
             sa.select(ScanTask).where(ScanTask.id == task_uuid).with_for_update()
         ).scalar_one_or_none()
         if task is None:
-            logger.warning("scan.run_module: task %s does not exist.", task_id)
+            logger.warning(
+                "scan.run_module: task %s is not reachable in this context.", task_id
+            )
             return "missing"
         job_id = task.scan_job_id
         if task.status is not ScanTaskStatus.QUEUED:
@@ -214,7 +260,7 @@ def run_module(task_id: str) -> str:
                 status_reason=orchestration.REASON_TASK_CANCELED,
                 occurred_at=now,
             )
-            _finalize_and_publish(job_id)
+            _finalize_and_publish(job_id, org_hint=org_id, job_hint=scan_job_id)
             return ScanTaskStatus.CANCELED.value
         refusal: str | None = None
         entry = None
@@ -240,7 +286,7 @@ def run_module(task_id: str) -> str:
                 status_reason=refusal,
                 occurred_at=now,
             )
-            _finalize_and_publish(job_id)
+            _finalize_and_publish(job_id, org_hint=org_id, job_hint=scan_job_id)
             return ScanTaskStatus.BLOCKED.value
         target_domain = task.target_domain
         if task.target_asset_id is not None:
@@ -281,6 +327,7 @@ def run_module(task_id: str) -> str:
     # Phase 3 — record exactly one outcome, then close the job if done.
     finished = _now()
     with session() as unit:
+        _set_hint_context(unit, org_id, scan_job_id)
         # FOR UPDATE again: the reaper may be closing this task concurrently.
         task = unit.execute(
             sa.select(ScanTask).where(ScanTask.id == task_uuid).with_for_update()
@@ -316,7 +363,7 @@ def run_module(task_id: str) -> str:
         status_reason=final[1],
         occurred_at=finished,
     )
-    _finalize_and_publish(job_id)
+    _finalize_and_publish(job_id, org_hint=org_id, job_hint=scan_job_id)
     return final[0].value
 
 
