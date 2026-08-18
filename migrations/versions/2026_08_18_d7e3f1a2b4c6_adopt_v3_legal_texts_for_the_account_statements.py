@@ -72,7 +72,7 @@ def upgrade() -> None:
         UPDATE statement
         SET version = '2026-08-18',
             content_hash = '{_TERMS_HASH}',
-            content_uri = 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/terms-of-service-2026-08-18.md',
+            content_uri = 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/fd0926985b6343c040a92a91c00ef3e63d804518/docs/legal/terms-of-service-2026-08-18.md',
             effective_at = '2026-08-18T00:00:00Z'
         WHERE id = '{_TERMS_ID}'
         """
@@ -84,7 +84,7 @@ def upgrade() -> None:
              content_hash, content_uri, effective_at, retired_at)
         VALUES
             ('{_PRIVACY_ID}', 'privacy_policy', '2026-08-18', 'acceptance',
-             NULL, '{_PRIVACY_HASH}', 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/privacy-statement-2026-08-18.md',
+             NULL, '{_PRIVACY_HASH}', 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/fd0926985b6343c040a92a91c00ef3e63d804518/docs/legal/privacy-statement-2026-08-18.md',
              '2026-08-18T00:00:00Z', NULL)
         """
     )
