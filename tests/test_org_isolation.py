@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -34,6 +35,11 @@ from nc3_testing_platform.domains.scans.models import ScanJob, ScanResult, ScanT
 pytestmark = pytest.mark.postgres
 
 _OWNER_URL = os.getenv("DATABASE_URL")
+
+
+def _rowcount(result: sa.Result[Any]) -> int:
+    """The DML row count (`Result` is typed without it; DML returns a cursor)."""
+    return cast("sa.CursorResult[Any]", result).rowcount
 
 
 def _role_url(role: str, env_name: str) -> str:
@@ -300,8 +306,8 @@ def test_cross_org_update_and_delete_touch_zero_rows(
         sa.update(Asset).where(Asset.id == seed.asset_b).values(value="stolen")
     )
     deleted = app_session.execute(sa.delete(Asset).where(Asset.id == seed.asset_b))
-    assert updated.rowcount == 0
-    assert deleted.rowcount == 0
+    assert _rowcount(updated) == 0
+    assert _rowcount(deleted) == 0
 
 
 def test_cross_org_insert_is_rejected_by_with_check(
@@ -404,7 +410,7 @@ def test_claim_transition_works_through_the_guest_arm(
             purge_at=None,
         )
     )
-    assert claimed.rowcount == 1
+    assert _rowcount(claimed) == 1
 
 
 # --- the worker path (hint-then-verify) -------------------------------------
@@ -498,7 +504,7 @@ def test_platform_role_reads_and_updates_any_job(
         .where(ScanTask.id == seed.task_a)
         .values(status=enums.ScanTaskStatus.QUEUED)
     )
-    assert touched.rowcount == 1
+    assert _rowcount(touched) == 1
 
 
 def test_platform_role_is_confined_to_its_duty_allowlist(
