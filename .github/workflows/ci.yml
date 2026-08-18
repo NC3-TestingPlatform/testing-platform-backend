@@ -136,7 +136,8 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
             -c "ALTER ROLE nc3_app PASSWORD 'nc3_app'" \
-            -c "ALTER ROLE app_platform PASSWORD 'app_platform'"
+            -c "ALTER ROLE app_platform PASSWORD 'app_platform'" \
+            -c "ALTER ROLE nc3_auth PASSWORD 'nc3_auth'"
 
       # The standing regression gate for any RLS policy change (US #81):
       # cross-org, cross-user, guest-arm, worker hint-then-verify, grant
@@ -202,7 +203,8 @@ jobs:
         run: |
           docker compose exec -T postgres psql -U postgres -d nc3_testing_platform \
             -c "ALTER ROLE nc3_app PASSWORD 'nc3_app'" \
-            -c "ALTER ROLE app_platform PASSWORD 'app_platform'"
+            -c "ALTER ROLE app_platform PASSWORD 'app_platform'" \
+            -c "ALTER ROLE nc3_auth PASSWORD 'nc3_auth'"
 
       - name: Scan round trip lands in PostgreSQL
         run: |

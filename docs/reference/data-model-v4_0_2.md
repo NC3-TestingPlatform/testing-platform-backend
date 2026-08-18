@@ -130,7 +130,8 @@ Namespaced text values, not database enums: `statement_key`, `required_context_t
 
 - A registered platform user belongs to exactly one organization.
 - Platform-administrator status comes from the identity provider and is independent of the organization role.
-- The identity provider stays the system of record for identity, credentials, authentication methods, sessions, and MFA enrollment.
+- Since B3 (US #79) the platform is its own identity provider: this row is the identity projection (`identity_subject` keys issuer + subject; local accounts use `local:<user id>`), while credentials and sessions live in the user-private tables of §3.5-§3.6 — never here, because this row is visible org-wide for member management (IDR-012).
+- `email` is unique case-insensitively (expression index `uq_app_user_email_lower`); the application lowercases at the boundary.
 
 ### 3.3 `key_envelope`
 
@@ -202,6 +203,34 @@ Plain `app_user.id` values appear only where the reference can be removed during
 Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, nulls attribution references, and deletes `organization_invitation` rows whose normalized email identifies the erased user, before the request is closed.
 
 Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
+
+### 3.5 `user_credential` (B3 / US #79)
+
+User-private row: RLS user arm only (`user_id = app.current_user`), granted to the `nc3_auth` role alone — the API service's credential-surface connection. The password hash is argon2id, encrypted (AES-256-GCM, `nonce || ct`) under the user-scope KEK of §3.3, so user erasure crypto-shreds it even out of backups.
+
+| Column                | Type        | Constraints                                                  |
+|-----------------------|-------------|--------------------------------------------------------------|
+| `id`                  | UUID        | Primary key                                                  |
+| `user_id`             | UUID        | Not null; unique; foreign key to `app_user.id` (cascade)     |
+| `password_ciphertext` | bytea       | Not null; argon2id hash under the user-scope KEK             |
+| `failed_login_count`  | integer     | Not null; default `0`; per-account brute-force counter       |
+| `locked_until`        | timestamptz | Nullable; lockout horizon after repeated failures            |
+| `password_updated_at` | timestamptz | Not null                                                     |
+| `created_at`          | timestamptz | Not null                                                     |
+| `updated_at`          | timestamptz | Not null                                                     |
+
+### 3.6 `user_session` (B3 / US #79)
+
+User-private row, same RLS class and role as §3.5. One row per browser session (IDR-010); the cookie holds the token, the row holds its SHA-256. The pre-context resolution token hash → session is the `auth_session_bootstrap` SECURITY DEFINER lookup (IDR-012); idle/absolute timeouts are enforced by the application against these stamps. §13.6 holds: MFA assurance will live on the session, never as a User boolean.
+
+| Column         | Type        | Constraints                                              |
+|----------------|-------------|-----------------------------------------------------------|
+| `id`           | UUID        | Primary key                                              |
+| `user_id`      | UUID        | Not null; foreign key to `app_user.id` (cascade); indexed |
+| `token_hash`   | bytea       | Not null; unique; SHA-256 of the cookie token            |
+| `created_at`   | timestamptz | Not null; anchors the absolute timeout                   |
+| `last_seen_at` | timestamptz | Not null; anchors the idle timeout                       |
+| `revoked_at`   | timestamptz | Nullable; set by logout and session rotation             |
 
 ```mermaid
 erDiagram
