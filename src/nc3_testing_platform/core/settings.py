@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/nc3_testing_platform"
     )
+    # The runtime connection (worker/db.py; the API session dependency when B3
+    # lands). Which role the credential carries is deployment topology, not
+    # code: api and the scan workers get `nc3_app`, worker-platform and beat
+    # get `app_platform` (IDR-012; docs/database-roles.md). `database_url`
+    # above stays the owning role, for Alembic and `make db-*` only.
+    app_database_url: str = (
+        "postgresql+psycopg://nc3_app:nc3_app@localhost:5432/nc3_testing_platform"
+    )
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "amqp://rabbitmq:rabbitmq@localhost:5672//"
 

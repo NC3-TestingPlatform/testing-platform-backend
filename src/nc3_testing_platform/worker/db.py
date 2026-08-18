@@ -6,9 +6,12 @@ under prefork each child builds its own engine on first use — laziness is what
 makes that per-process instead of per-fork-of-a-shared-pool, which would hand
 children shared sockets.
 
-This connects with the owner-role ``DATABASE_URL``. The RLS runtime role and
-per-transaction org/user context (``APP_DATABASE_URL``, ``SET LOCAL``) are
-B5 / US #81, which revalidates every write path added here.
+This connects with the runtime role via ``APP_DATABASE_URL`` — never the
+owning role, which is Alembic's alone (docs/database-roles.md). Which runtime
+role the URL carries is per-service compose topology: the scan workers get
+``nc3_app`` and open a per-transaction RLS context (`core/rls.py`), the
+platform worker and beat get ``app_platform``, whose per-duty policies read
+no GUC (IDR-012).
 """
 
 from collections.abc import Iterator
@@ -35,7 +38,7 @@ def get_engine() -> sa.Engine:
     """
     global _engine
     if _engine is None:
-        _engine = sa.create_engine(settings.database_url, pool_pre_ping=True)
+        _engine = sa.create_engine(settings.app_database_url, pool_pre_ping=True)
     return _engine
 
 
