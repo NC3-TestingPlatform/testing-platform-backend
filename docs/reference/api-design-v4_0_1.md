@@ -11,7 +11,7 @@
 - Inside the JSON media type, the access state selects the variant: authenticated requests carry `asset_id`, unauthenticated requests carry `target`.
 - Seven operations accept an anonymous caller: `POST /scans`, the three guest scan reads (§2.3), `GET /statements`, `GET /invitations/{token}`, `GET /feeds/{token}`. Every other operation requires an OpenID Connect token or a platform API key and answers `401` without one. `/healthz` and `/readyz` sit outside `/api/v1`.
 - `ScanJob` and `ScanTask` state comes from the API. SSE events are advisory; when an event and a read disagree, the read is correct.
-- Errors use the RFC 9457 Problem Details envelope.
+- Errors use the RFC 9457 Problem Details envelope. A problem `type` URI is minted only where a client must discriminate between remedies for the same status code (§5.1's step-up type); every other error carries `about:blank`.
 - Some collection endpoints use cursor pagination and stable ordering. Lists order newest first, keyed on the UUIDv7 `id`; the audit log orders by (`chain_id`, `sequence_number`) (§15).
 - Shapes fixed by the generated contract are versioned by the OpenAPI document itself. Three payloads live outside the document and carry their own `schema_version`: scan results, webhook payloads, and notification `data`.
 - The identity provider owns identity, credentials, authentication methods, sessions, MFA enrollment, current assurance, and platform-administrator claims. The application owns its `app_user` projection, organization membership and role, assets, and verification state.
@@ -179,6 +179,7 @@ Rules:
 - `POST .../verification` requires current MFA assurance.
 - Current MFA assurance is read from the identity provider's session or token. An operation that requires it therefore declares only the OpenID Connect scheme: a platform API key carries no assurance.
 - Assurance is the `amr` claim carrying an MFA method, current while the authentication event is within the configured `max_age`. The platform reads `amr` rather than `acr`: `amr` values are an IANA-registered vocabulary (RFC 8176), while `acr` values are defined per identity provider, and the platform assumes no provider-specific vocabulary.
+- An operation that requires assurance the presented token does not carry answers `403` with problem `type` `https://testing.nc3.lu/problems/step-up-required`. The type is the discriminator between step-up — remedied by a fresh authentication with an MFA method — and a plain forbidden, which no retry remedies.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
 ### 5.2 Feeds
@@ -350,12 +351,14 @@ POST /api/v1/api-keys/{key_id}/revoke
 
 ```http
 GET  /api/v1/statements
+GET  /api/v1/statement-responses
 POST /api/v1/statement-responses
 ```
 
 - `GET /statements` returns the statements currently in force — `effective_at` reached, not retired — each with its `id`, `statement_key`, `version`, `response_kind`, `required_context_type`, `content_hash`, `content_uri`, and `effective_at`. Unauthenticated.
 - A client must send the exact version it answered. This operation is the only way to learn which version is current.
 - `POST /statement-responses` records an account-level response, where `required_context_type` is null. It rejects a statement that requires a context; a per-launch declaration travels in the launch payload (§2.1).
+- `GET /statement-responses` returns the caller's receipts, account-level and context-bound alike, each restating the `statement_key` and the exact `version` answered. A statement in force whose current version has no receipt is one the caller has yet to answer — the readback behind the acceptance prompt. Authenticated; cursor-paginated, because context-bound receipts arrive per launch.
 - No v4.0 executable test is classified as intrusive, so no v4.0 launch requires a per-launch declaration.
 
 ## 15. Audit log

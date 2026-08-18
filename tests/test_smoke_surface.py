@@ -217,6 +217,7 @@ CASES: tuple[Case, ...] = (
         "/api/v1/statement-responses",
         json_body={"statement_key": "terms_and_conditions", "version": "1.0.0"},
     ),
+    Case("get", "/api/v1/statement-responses"),
     Case("get", "/api/v1/admin/audit-events"),
     Case("get", "/healthz"),
     Case("get", "/readyz"),

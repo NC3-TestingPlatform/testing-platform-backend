@@ -72,6 +72,43 @@ def problem_responses(*status_codes: int) -> dict[int | str, dict]:
     }
 
 
+STEP_UP_PROBLEM_TYPE = "https://testing.nc3.lu/problems/step-up-required"
+
+
+def step_up_forbidden() -> dict[int | str, dict]:
+    """The `403` entry for an operation gated on current MFA assurance.
+
+    The problem `type` is the discriminator a client retry loop needs: step-up
+    is remedied by a fresh authentication with an MFA method, where a plain
+    forbidden is not remedied by any retry. Merge into a route's `responses`
+    alongside :func:`problem_responses`.
+    """
+    return {
+        403: {
+            "model": ProblemDetail,
+            "description": (
+                "Forbidden. When the operation requires current MFA assurance "
+                "that the presented token does not carry, `type` is "
+                f"`{STEP_UP_PROBLEM_TYPE}` and the remedy is a fresh "
+                "authentication with an MFA method."
+            ),
+            "content": {
+                PROBLEM_MEDIA_TYPE: {
+                    "example": {
+                        "type": STEP_UP_PROBLEM_TYPE,
+                        "title": "Step-up authentication required",
+                        "status": 403,
+                        "detail": (
+                            "This operation requires a recent multi-factor "
+                            "authentication event."
+                        ),
+                    }
+                }
+            },
+        }
+    }
+
+
 async def _http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> ProblemResponse:
@@ -165,14 +202,19 @@ def _responses(schema: dict) -> Iterator[dict]:
 
 
 def _relabel_problem_media_type(schema: dict) -> None:
-    """In-place: move ProblemDetail error bodies from application/json to problem+json."""
+    """In-place: move ProblemDetail error bodies from application/json to problem+json.
+
+    Keys already declared under problem+json (an `example`, as in
+    :func:`step_up_forbidden`) win over the generated body.
+    """
     for response in _responses(schema):
         content = response.get("content")
         if not content:
             continue
         json_body = content.get("application/json")
         if json_body and json_body.get("schema", {}).get("$ref") == _PROBLEM_REF:
-            content[PROBLEM_MEDIA_TYPE] = content.pop("application/json")
+            declared = content.get(PROBLEM_MEDIA_TYPE) or {}
+            content[PROBLEM_MEDIA_TYPE] = {**content.pop("application/json"), **declared}
 
 
 def _replace_default_validation_body(schema: dict) -> None:
