@@ -130,6 +130,20 @@ jobs:
           uv run --locked alembic downgrade base
           uv run --locked alembic upgrade head
 
+      # The runtime roles are created by the migrations without credentials
+      # (docs/database-roles.md); the suite below connects as them.
+      - name: Bootstrap the runtime role credentials
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+            -c "ALTER ROLE nc3_app PASSWORD 'nc3_app'" \
+            -c "ALTER ROLE app_platform PASSWORD 'app_platform'"
+
+      # The standing regression gate for any RLS policy change (US #81):
+      # cross-org, cross-user, guest-arm, worker hint-then-verify, grant
+      # matrix — all asserted as the runtime roles, never the owner.
+      - name: RLS isolation suite
+        run: uv run --locked pytest -m postgres
+
   # Taiga #160: the stack must come up from a clean checkout, gated on the
   # containers' own healthchecks (--wait fails the step if any goes unhealthy),
   # and prove one job round-trips broker -> workers -> PostgreSQL.
