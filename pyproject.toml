@@ -38,7 +38,7 @@ pqc = "nc3_testing_platform.modules.pqc:MODULE"
 [project.optional-dependencies]
 modules = [
     "chainvalidator @ git+https://github.com/NC3-TestingPlatform/chainvalidator.git@v0.1.6",
-    "quantumvalidator @ git+https://github.com/NC3-TestingPlatform/quantumvalidator.git@v0.7.0",
+    "quantumvalidator @ git+https://github.com/NC3-TestingPlatform/quantumvalidator.git@v0.7.1",
 ]
 
 [dependency-groups]

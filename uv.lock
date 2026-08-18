@@ -1080,7 +1080,7 @@ requires-dist = [
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
-    { name = "quantumvalidator", marker = "extra == 'modules'", git = "https://github.com/NC3-TestingPlatform/quantumvalidator.git?rev=v0.7.0" },
+    { name = "quantumvalidator", marker = "extra == 'modules'", git = "https://github.com/NC3-TestingPlatform/quantumvalidator.git?rev=v0.7.1" },
     { name = "redis", specifier = ">=5" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "tzdata", specifier = ">=2026.3" },
@@ -1475,8 +1475,8 @@ wheels = [
 
 [[package]]
 name = "quantumvalidator"
-version = "0.7.0"
-source = { git = "https://github.com/NC3-TestingPlatform/quantumvalidator.git?rev=v0.7.0#a1a9ef55a026391940bc9942dd5cceab025c0396" }
+version = "0.7.1"
+source = { git = "https://github.com/NC3-TestingPlatform/quantumvalidator.git?rev=v0.7.1#3525ce4d2251455f38b1da5ecf5b874564c10e4e" }
 dependencies = [
     { name = "cryptography" },
     { name = "rich" },
