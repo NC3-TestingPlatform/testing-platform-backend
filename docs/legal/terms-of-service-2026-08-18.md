@@ -1,10 +1,19 @@
-<!-- Canonical snapshot of https://testing.nc3.lu/terms-conditions/
-     (v3 Terms of Service, last updated October 2024 per the page),
-     retrieved 2026-08-18. Adopted provisionally for v4.0 statement
-     terms_and_conditions version 2024-10 until the DPO delivers the
-     v4 texts (Non-functional -> GDPR). statement.content_hash is the
-     SHA-256 of this file's bytes. Do not edit: a new text is a new
-     file and a new statement version row. -->
+<!-- Platform Terms of Service, version 2026-08-18. Adapted from
+     https://testing.nc3.lu/terms-conditions/ (v3 text, last updated
+     October 2024 per the page; retrieved 2026-08-18), adopted
+     provisionally until the DPO delivers the v4 texts (Non-functional
+     -> GDPR). Corrections applied to the source (PR #39 review):
+     1. Your Account: privacy-policy link fixed from the mistyped
+        https://testing.c3.lu/privacy to https://testing.nc3.lu/privacy/.
+     2. Your Content: malformed sentence repaired to 'Licenses related
+        to statistical data derived from your content will continue
+        after your content is removed.'
+     3. Termination: undefined 'Data Shared' removed from the survival
+        list; capitalization aligned to the section names.
+     statement.content_hash is the SHA-256 of this file's bytes;
+     statement.content_uri points at this file on the public repository.
+     Do not edit: a new text is a new file and a new statement version
+     row. -->
 
 # Terms of Service
 
@@ -120,7 +129,7 @@ provide your first and last name, a valid e-mail address, your company or affili
 You may delete your account on the website at any time. The deletion means the permanent anonymization of all
 your account and personal data.
 Your personal data is processed according to Testing Platform Privacy Policy
-( https://testing.c3.lu/privacy )
+( https://testing.nc3.lu/privacy/ )
 LHC reserves the right to decline any application from you to register as a user of the platform
 in their sole discretion.
 You agree to be responsible for all action taken using your account, whether authorized by you or not, until you
@@ -143,14 +152,14 @@ However, by submitting content to this website, you agree to grant to LHC a non-
 non-transferable, royalty-free, license to use your content for statistical and analysis purposes.
 When the content you submit is removed from the website, whether by you or by LHC,
 LHC's special license ends when the last copy disappears from LHC's backups,
-caches, and other systems. Licenses related to statistical data you and is will continue/survive after your
+caches, and other systems. Licenses related to statistical data derived from your content will continue after your
 content is removed.
 
 ## Termination
 
 Either you or LHC may end the agreement written out in these terms at any time. When our agreement
 ends, your permission to use the website also ends.
-The following provisions survive the end of our agreement: Your account, Your Content, Data Shared.
+The following provisions survive the end of our agreement: Your Account, Your Content.
 
 ## Disputes
 

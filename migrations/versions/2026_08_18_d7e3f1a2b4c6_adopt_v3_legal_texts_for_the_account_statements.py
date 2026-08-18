@@ -9,31 +9,28 @@ Art. 7(1) demonstrability — flagged in PR #38 review). Until the DPO delivers
 the v4 texts (Non-functional → GDPR), the live v3 documents are adopted
 provisionally (decision 2026-08-18):
 
-* `terms_and_conditions` → version `2024-10` ("last updated October 2024"
-  per the page), pointing at https://testing.nc3.lu/terms-conditions/ with
-  the SHA-256 of the canonical snapshot committed at
-  `docs/legal/terms-of-service-2024-10.md`. The placeholder row is corrected
-  in place rather than versioned: its 2026-01-15 "version" named no real
-  text, and no production registration exists to have attested to it.
+* `terms_and_conditions` → version `2026-08-18`: the platform's adapted
+  Terms of Service, committed at `docs/legal/terms-of-service-2026-08-18.md`
+  (adapted from the v3 page with three corrections found in the PR #39
+  review — mistyped privacy link, malformed survival clause, undefined
+  "Data Shared"; the file header lists them). The placeholder row is
+  corrected in place rather than versioned: its 2026-01-15 "version" named
+  no real text, and no production registration exists to have attested to it.
 * `privacy_policy` → new acceptance statement (the NFR requires explicit
-  privacy consent at signup), version `2026-08-18` (the page is undated, so
-  the snapshot date pins the text), pointing at
-  https://testing.nc3.lu/privacy/ with the SHA-256 of
-  `docs/legal/privacy-statement-2026-08-18.md`. Registration requires every
-  active account-level acceptance, so the new row binds automatically.
+  privacy consent at signup), version `2026-08-18`: the platform's adapted
+  Privacy Statement at `docs/legal/privacy-statement-2026-08-18.md`
+  (truncated sentence completed; the approved retention figures added).
+  Registration requires every active account-level acceptance, so the new
+  row binds automatically.
+* `content_hash` is the SHA-256 of the committed file; `content_uri` points
+  at the file on the public repository — the live v3 pages no longer match
+  the adapted text, so a receipt must reference the exact document shown.
 * `scan_target_permission` keeps its placeholder: it is a per-launch
   attestation, and no test in the v4.0 executable catalog is classified
   intrusive, so nothing can record a receipt against it yet.
 
 The DPO's v4 texts land later as NEW version rows (retiring these), never as
 edits. Same NO FORCE wrap as the seed (docs/database-migrations.md).
-
-The snapshots are verbatim, defects included: the live pages carry a
-truncated sentence ("…the company name and full."), a mistyped
-privacy-policy link (testing.c3.lu), and a malformed survival clause — all
-routed to the site owner/DPO. Fixing them here would make receipts attest to
-a text nobody was shown; the fixed pages arrive as new snapshots and new
-version rows.
 
 Downgrade refuses while any consent receipt references these statements:
 deleting the privacy row would fail on its FK anyway, and rewriting the
@@ -55,10 +52,10 @@ _TERMS_ID = "019ee1a2-0011-7c22-8d33-4e55f6a77b88"
 _PRIVACY_ID = "019ee1a2-3344-7f55-b066-7b88c9aadbcc"
 
 _TERMS_HASH = (
-    "sha256:6d80fb1d091c6aaeeb406150fd635976fffde54ad314aac373e7601f60a2c21a"
+    "sha256:3cbaf4702d67aab5b7d57e9f77cd9e3087df9a4a69714fd23ce041abcb075b74"
 )
 _PRIVACY_HASH = (
-    "sha256:04c03ecda8de1e039eba8fa3e5f428a631308008166b87ddb5b7e4cbfe9d4b56"
+    "sha256:003dde7b97929d32fd428460f6dd651409b9bfe58bbb43349dee0667e067a1e0"
 )
 
 # The seed's placeholder values, restored verbatim on downgrade.
@@ -73,10 +70,10 @@ def upgrade() -> None:
     op.execute(
         f"""
         UPDATE statement
-        SET version = '2024-10',
+        SET version = '2026-08-18',
             content_hash = '{_TERMS_HASH}',
-            content_uri = 'https://testing.nc3.lu/terms-conditions/',
-            effective_at = '2024-10-01T00:00:00Z'
+            content_uri = 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/terms-of-service-2026-08-18.md',
+            effective_at = '2026-08-18T00:00:00Z'
         WHERE id = '{_TERMS_ID}'
         """
     )
@@ -87,7 +84,7 @@ def upgrade() -> None:
              content_hash, content_uri, effective_at, retired_at)
         VALUES
             ('{_PRIVACY_ID}', 'privacy_policy', '2026-08-18', 'acceptance',
-             NULL, '{_PRIVACY_HASH}', 'https://testing.nc3.lu/privacy/',
+             NULL, '{_PRIVACY_HASH}', 'https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/privacy-statement-2026-08-18.md',
              '2026-08-18T00:00:00Z', NULL)
         """
     )

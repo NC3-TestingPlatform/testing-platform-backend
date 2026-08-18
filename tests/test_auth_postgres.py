@@ -85,7 +85,7 @@ def _registration_body(email: str) -> dict[str, Any]:
         "password": PASSWORD,
         "display_name": "Integration",
         "statement_responses": [
-            {"statement_key": "terms_and_conditions", "version": "2024-10"},
+            {"statement_key": "terms_and_conditions", "version": "2026-08-18"},
             {"statement_key": "privacy_policy", "version": "2026-08-18"},
         ],
     }

@@ -34,26 +34,26 @@ async def list_statements() -> list[Statement]:
     account to attach an acceptance to.
     """
     # Values mirror the statement rows the migrations seed (a9f2c4e6b8d0 +
-    # d7e3f1a2b4c6): the provisionally adopted v3 texts, whose digests are the
-    # SHA-256 of the canonical snapshots under docs/legal/. The DPO's v4
-    # texts arrive as new version rows (Non-functional → GDPR).
+    # d7e3f1a2b4c6): the platform's adapted v3 texts, whose digests are the
+    # SHA-256 of the canonical files under docs/legal/ (content_uri points
+    # there). The DPO's v4 texts arrive as new version rows.
     return [
         Statement(
             id=_STATEMENT_ID,
             statement_key="terms_and_conditions",
-            version="2024-10",
+            version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
-            content_hash="sha256:6d80fb1d091c6aaeeb406150fd635976fffde54ad314aac373e7601f60a2c21a",
-            content_uri="https://testing.nc3.lu/terms-conditions/",
-            effective_at=datetime(2024, 10, 1, tzinfo=UTC),
+            content_hash="sha256:3cbaf4702d67aab5b7d57e9f77cd9e3087df9a4a69714fd23ce041abcb075b74",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/terms-of-service-2026-08-18.md",
+            effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(
             id=_PRIVACY_ID,
             statement_key="privacy_policy",
             version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
-            content_hash="sha256:04c03ecda8de1e039eba8fa3e5f428a631308008166b87ddb5b7e4cbfe9d4b56",
-            content_uri="https://testing.nc3.lu/privacy/",
+            content_hash="sha256:003dde7b97929d32fd428460f6dd651409b9bfe58bbb43349dee0667e067a1e0",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/privacy-statement-2026-08-18.md",
             effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(

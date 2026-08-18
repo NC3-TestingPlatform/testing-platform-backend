@@ -1,10 +1,18 @@
-<!-- Canonical snapshot of https://testing.nc3.lu/privacy/
-     (v3 Privacy Statement, undated on the page), retrieved
-     2026-08-18. Adopted provisionally for v4.0 statement
-     privacy_policy version 2026-08-18 until the DPO delivers the
-     v4 texts (Non-functional -> GDPR). statement.content_hash is the
-     SHA-256 of this file's bytes. Do not edit: a new text is a new
-     file and a new statement version row. -->
+<!-- Platform Privacy Statement, version 2026-08-18. Adapted from
+     https://testing.nc3.lu/privacy/ (v3 text, undated on the page;
+     retrieved 2026-08-18), adopted provisionally until the DPO
+     delivers the v4 texts (Non-functional -> GDPR). Corrections
+     applied to the source (PR #39 review):
+     1. Completed the truncated collected-data sentence ('...company
+        name and full.' -> '...company name and full address.').
+     2. Added the platform's retention periods for user data (12-month
+        scan results with notify/extend/confirm and a 30-day grace
+        period; 24-month audit records; erasure within 30 days of
+        account deletion) - the approved specification figures.
+     statement.content_hash is the SHA-256 of this file's bytes;
+     statement.content_uri points at this file on the public repository.
+     Do not edit: a new text is a new file and a new statement version
+     row. -->
 
 # PRIVACY STATEMENT
 
@@ -54,7 +62,7 @@ technical and functional management of our website.
 When you register to the Testing Platform, we process and collect certain personal data. The types of personal
 information that are collected from you include: name and family name of the contact person, username and
 password,
-email address as well as the company name and full.
+email address as well as the company name and full address.
 
 When you contact us by mail, we process your contact information and any other details you provide us. We will
 use
@@ -82,6 +90,14 @@ by
 you as user will not be deleted as we might use them internally, however they will not be connected to you
 anymore,
 since your account gets anonymized.
+
+On the Testing Platform specifically, scan results are retained for
+twelve (12) months by default; you are notified before this period
+lapses and may extend it, export the data, or confirm deletion, after
+which the data is permanently deleted following a thirty (30) day grace
+period. Audit records are retained for twenty-four (24) months on their
+own legal basis. If you delete your account, all personal data
+associated with it is permanently removed within thirty (30) days.
 
 However, if requested by local and national law, certain personal data may be retained for a longer period. For
 instance, for accounting purposes, such as, but limited to, payment of the services fees, data will be retained
