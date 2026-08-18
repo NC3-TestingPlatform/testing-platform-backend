@@ -55,7 +55,7 @@ _TERMS_HASH = (
     "sha256:3cbaf4702d67aab5b7d57e9f77cd9e3087df9a4a69714fd23ce041abcb075b74"
 )
 _PRIVACY_HASH = (
-    "sha256:003dde7b97929d32fd428460f6dd651409b9bfe58bbb43349dee0667e067a1e0"
+    "sha256:0560cefecd67a08c81784b68f7644e36c5d897d36c559691ecaf9a5e6de5a0c0"
 )
 
 # The seed's placeholder values, restored verbatim on downgrade.

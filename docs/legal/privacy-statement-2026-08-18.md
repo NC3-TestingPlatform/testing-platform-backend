@@ -3,8 +3,11 @@
      retrieved 2026-08-18), adopted provisionally until the DPO
      delivers the v4 texts (Non-functional -> GDPR). Corrections
      applied to the source (PR #39 review):
-     1. Completed the truncated collected-data sentence ('...company
-        name and full.' -> '...company name and full address.').
+     1. Collected-data sentence aligned with what the platform actually
+        collects at registration (email address, password, optional
+        display name) - the source sentence was truncated and described
+        the v3 site's collection (contact person, username, company
+        name), none of which v4 collects.
      2. Added the platform's retention periods for user data (12-month
         scan results with notify/extend/confirm and a 30-day grace
         period; 24-month audit records; erasure within 30 days of
@@ -59,10 +62,9 @@ user-agents, URLs, date and time logs. We collect those logs for our legitimate 
 the
 technical and functional management of our website.
 
-When you register to the Testing Platform, we process and collect certain personal data. The types of personal
-information that are collected from you include: name and family name of the contact person, username and
-password,
-email address as well as the company name and full address.
+When you register to the Testing Platform, we process and collect certain personal data. The personal
+information collected from you at registration is: your email address, a password, and an optional display
+name.
 
 When you contact us by mail, we process your contact information and any other details you provide us. We will
 use

@@ -52,7 +52,7 @@ async def list_statements() -> list[Statement]:
             statement_key="privacy_policy",
             version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
-            content_hash="sha256:003dde7b97929d32fd428460f6dd651409b9bfe58bbb43349dee0667e067a1e0",
+            content_hash="sha256:0560cefecd67a08c81784b68f7644e36c5d897d36c559691ecaf9a5e6de5a0c0",
             content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/main/docs/legal/privacy-statement-2026-08-18.md",
             effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
