@@ -13,6 +13,13 @@
       "standard": "CNSA 2.0, BSI TR-02102-2",
       "status": "FAIL",
       "value": null
+    },
+    {
+      "name": "certificate_key",
+      "reason": "RSA key below the 3072-bit classical minimum. Reissue the certificate with RSA >= 3072 or an approved EC curve (P-256/P-384/P-521).",
+      "standard": "CNSA 2.0, BSI TR-02102-2",
+      "status": "FAIL",
+      "value": "RSA-2048"
     }
   ],
   "detected_starttls": null,

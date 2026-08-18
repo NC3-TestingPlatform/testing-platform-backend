@@ -13,6 +13,13 @@
       "standard": "NIST FIPS 203",
       "status": "FAIL",
       "value": "sntrup761x25519-sha512"
+    },
+    {
+      "name": "host_key_algorithms",
+      "reason": "Deprecated host-key algorithms advertised: ssh-dss is DSA (withdrawn by FIPS 186-5); ssh-rsa signs with SHA-1 \u2014 use rsa-sha2-256/512 instead.",
+      "standard": "RFC 8332, NIST FIPS 186-5, BSI TR-02102-4",
+      "status": "FAIL",
+      "value": "ssh-rsa"
     }
   ],
   "detected_starttls": "ssh",

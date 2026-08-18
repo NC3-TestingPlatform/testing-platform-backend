@@ -9,7 +9,7 @@ moves casually.
 # The engine this module wraps, and the tag it is pinned to in the `modules`
 # optional-dependency extra. Bump both together with the dependency pin.
 ENGINE = "quantumvalidator"
-ENGINE_VERSION = "0.6.4"
+ENGINE_VERSION = "0.7.1"
 
 # The module's result schema. Bump when `raw_output`'s shape or the check-id
 # vocabulary below changes meaning — not when the engine version changes.

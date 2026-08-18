@@ -13,6 +13,13 @@
       "standard": "BSI TR-02102-2",
       "status": "PASS",
       "value": "X25519MLKEM768"
+    },
+    {
+      "name": "certificate_key",
+      "reason": "EC curve is approved for certificates (all pre-PQC certificate keys remain quantum-vulnerable).",
+      "standard": "NIST SP 800-186, BSI TR-02102-2",
+      "status": "PASS",
+      "value": "P-256"
     }
   ],
   "detected_starttls": null,
