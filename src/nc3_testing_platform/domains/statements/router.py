@@ -18,6 +18,7 @@ router = APIRouter(tags=["statements"])
 
 _T0 = datetime(2026, 1, 15, tzinfo=UTC)
 _STATEMENT_ID = UUID("019ee1a2-0011-7c22-8d33-4e55f6a77b88")
+_PRIVACY_ID = UUID("019ee1a2-3344-7f55-b066-7b88c9aadbcc")
 _RECEIPT_ID = UUID("019ee1a2-1122-7d33-9e44-5f66a7b88c99")
 
 
@@ -32,15 +33,28 @@ async def list_statements() -> list[Statement]:
     Unauthenticated: a visitor has to be able to read the terms before there is an
     account to attach an acceptance to.
     """
+    # Values mirror the statement rows the migrations seed (a9f2c4e6b8d0 +
+    # d7e3f1a2b4c6): the provisionally adopted v3 texts, whose digests are the
+    # SHA-256 of the canonical snapshots under docs/legal/. The DPO's v4
+    # texts arrive as new version rows (Non-functional → GDPR).
     return [
         Statement(
             id=_STATEMENT_ID,
             statement_key="terms_and_conditions",
-            version="2026-01-15",
+            version="2024-10",
             response_kind=StatementResponseKind.ACCEPTANCE,
-            content_hash="sha256:2f8a1c9d4e7b0a3f6c5d8e1b4a7f0c3d6e9b2a5f8c1d4e7b0a3f6c5d8e1b4a7f",
-            content_uri="https://testing.nc3.lu/legal/terms/2026-01-15",
-            effective_at=_T0,
+            content_hash="sha256:6d80fb1d091c6aaeeb406150fd635976fffde54ad314aac373e7601f60a2c21a",
+            content_uri="https://testing.nc3.lu/terms-conditions/",
+            effective_at=datetime(2024, 10, 1, tzinfo=UTC),
+        ),
+        Statement(
+            id=_PRIVACY_ID,
+            statement_key="privacy_policy",
+            version="2026-08-18",
+            response_kind=StatementResponseKind.ACCEPTANCE,
+            content_hash="sha256:04c03ecda8de1e039eba8fa3e5f428a631308008166b87ddb5b7e4cbfe9d4b56",
+            content_uri="https://testing.nc3.lu/privacy/",
+            effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(
             id=UUID("019ee1a2-2233-7e44-af55-6a77b899cdaa"),

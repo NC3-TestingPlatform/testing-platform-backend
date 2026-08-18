@@ -79,13 +79,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 
 
 def _registration_body(email: str) -> dict[str, Any]:
-    """A valid registration payload accepting the seeded terms statement."""
+    """A valid registration payload accepting both seeded acceptance statements."""
     return {
         "email": email,
         "password": PASSWORD,
         "display_name": "Integration",
         "statement_responses": [
-            {"statement_key": "terms_and_conditions", "version": "2026-01-15"}
+            {"statement_key": "terms_and_conditions", "version": "2024-10"},
+            {"statement_key": "privacy_policy", "version": "2026-08-18"},
         ],
     }
 
