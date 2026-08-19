@@ -3,10 +3,11 @@
 Since B3 (US #79) the platform is its own identity provider (Non-functional
 v0.11): registration, argon2id credentials, and sessions are platform-managed
 in `domains/auth`. Browser authentication is one server-side `user_session`
-row behind one `__Host-` cookie (IDR-010), enforced by :func:`require_session`
-— the only live gate in this module. Everything the session needs before an
-RLS context exists goes through the `auth_session_bootstrap` SECURITY DEFINER
-lookup (IDR-012).
+row behind one `__Host-` cookie (IDR-010). The live gates in this module are
+the two session dependencies (full and pending-MFA, B4) and the session-based
+MFA assurance gate; everything the session needs before an RLS context exists
+goes through the `auth_session_bootstrap` SECURITY DEFINER lookup (IDR-012),
+while MFA state is read in-policy after the user arm opens.
 
 The OpenID Connect and API-key schemes stay published in the contract:
 API keys remain machine-to-machine only and their verification lands with the
@@ -24,17 +25,23 @@ contract: the BFF calls this API as an ordinary client.
 
 import hashlib
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
 import sqlalchemy as sa
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyCookie, APIKeyHeader, OpenIdConnect
+from sqlalchemy.orm import Session
 
 from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.api_db import AuthDbSession
-from nc3_testing_platform.core.errors import PROBLEM_MEDIA_TYPE, ProblemDetail
+from nc3_testing_platform.core.errors import (
+    PROBLEM_MEDIA_TYPE,
+    ProblemDetail,
+    ProblemException,
+    problem_type_uri,
+)
 from nc3_testing_platform.core.settings import settings
 
 # Re-exported name; the environment read lives on the settings module.
@@ -45,9 +52,10 @@ oidc = OpenIdConnect(
     scheme_name="OpenIdConnect",
     auto_error=False,
     description=(
-        "OpenID Connect token issued by the platform identity provider. Some "
-        "operations additionally require current MFA assurance, read from the "
-        "token at request time."
+        "OpenID Connect token — the federation seam of a later SSO phase; "
+        "v4.0 ships no SSO and issues no tokens. When federation lands, the "
+        "token's `amr`/`auth_time` populate the platform session's MFA "
+        "assurance at login; the currency rule stays platform-side."
     ),
 )
 
@@ -58,8 +66,8 @@ api_key = APIKeyHeader(
     description=(
         "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` "
         "and `full_scan`. A scan launched with a key is recorded with "
-        "`source = api`. Creating or revoking a key requires an OpenID Connect "
-        "token with current MFA assurance."
+        "`source = api`. Creating or revoking a key requires a browser session "
+        "with current MFA assurance — a key carries no assurance."
     ),
 )
 
@@ -106,6 +114,12 @@ class AuthenticatedSession:
     session_id: UUID
     user_id: UUID
     organization_id: UUID
+    # MFA state (B4): enrollment derived from `user_mfa`, assurance from the
+    # session row (§13.6), and the database clock the currency check compares
+    # against. Defaults keep pre-B4 constructions (tests, fakes) valid.
+    mfa_enrolled: bool = False
+    mfa_verified_at: datetime | None = None
+    observed_at: datetime | None = None
 
 
 # The pre-context lookup (IDR-012): runs as the nc3_auth_definer-owned
@@ -130,13 +144,31 @@ def _session_refused(clear_cookie: bool) -> HTTPException:
     )
 
 
-def require_session(token: SessionAuth, db: AuthDbSession) -> AuthenticatedSession:
-    """Resolve the session cookie to an identity and open its RLS user arm.
+# In-policy MFA state, read after the user arm opens: assurance lives on the
+# session row and enrollment is derived from `user_mfa` (§13.6). Deliberately
+# NOT part of the definer bootstrap, whose read surface stays at B3's three
+# tables — the definer owner never reaches the seed table. Raw SQL, not the
+# ORM model — core must not import `domains/auth`.
+_MFA_STATE = sa.text(
+    "SELECT s.mfa_verified_at,"
+    " EXISTS (SELECT 1 FROM user_mfa m"
+    " WHERE m.user_id = :user_id AND m.confirmed_at IS NOT NULL)"
+    " AS mfa_enrolled"
+    " FROM user_session s WHERE s.id = :session_id"
+)
+
+
+def _resolve_session(
+    token: str | None, db: Session, *, allow_pending: bool
+) -> AuthenticatedSession:
+    """The single owner of session policy behind both session dependencies.
 
     Timeout policy runs application-side against the database clock returned
     by the lookup (idle and absolute caps, Non-functional v0.11); the
     `last_seen_at` touch is an in-policy UPDATE under the user context, never
-    a definer write. Every failure answers `401` and clears the cookie.
+    a definer write. Every failure answers `401`; expiry and revocation clear
+    the cookie, the pending-MFA refusal keeps it — that session is live and
+    exactly what `POST /auth/mfa/verify` consumes.
     """
     if not token:
         raise _session_refused(clear_cookie=False)
@@ -153,15 +185,61 @@ def require_session(token: SessionAuth, db: AuthDbSession) -> AuthenticatedSessi
     ):
         raise _session_refused(clear_cookie=True)
     rls.set_user_context(db, row.user_id)
+    state = db.execute(
+        _MFA_STATE, {"user_id": row.user_id, "session_id": row.session_id}
+    ).one()
+    if (
+        not allow_pending
+        and state.mfa_enrolled
+        and state.mfa_verified_at is None
+    ):
+        raise ProblemException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "The session awaits its second factor: "
+                "complete login via POST /auth/mfa/verify."
+            ),
+            problem_type=problem_type_uri("mfa-required"),
+        )
     db.execute(_SESSION_TOUCH, {"session_id": row.session_id})
     return AuthenticatedSession(
         session_id=row.session_id,
         user_id=row.user_id,
         organization_id=row.organization_id,
+        mfa_enrolled=bool(state.mfa_enrolled),
+        mfa_verified_at=state.mfa_verified_at,
+        observed_at=row.observed_at,
     )
 
 
+def require_session(token: SessionAuth, db: AuthDbSession) -> AuthenticatedSession:
+    """Resolve the session cookie to a fully authenticated identity.
+
+    An MFA-enrolled session that has not completed its second factor answers
+    problem type `mfa-required` (`401`, cookie kept). Only the operations on
+    :data:`PendingMfaSession` accept such a session.
+    """
+    return _resolve_session(token, db, allow_pending=False)
+
+
+def require_pending_or_current_session(
+    token: SessionAuth, db: AuthDbSession
+) -> AuthenticatedSession:
+    """Resolve the session cookie, accepting a pending-MFA session.
+
+    Same lookup, timeout, and revocation policy as :func:`require_session` —
+    only the pending refusal is skipped. The scope stays deliberately tiny:
+    the MFA verify (completes the factor), logout (revocation needs no
+    assurance), and the session view (a reload mid-login must still render
+    the second-factor prompt). A test pins the exact operation set.
+    """
+    return _resolve_session(token, db, allow_pending=True)
+
+
 CurrentSession = Annotated[AuthenticatedSession, Depends(require_session)]
+PendingMfaSession = Annotated[
+    AuthenticatedSession, Depends(require_pending_or_current_session)
+]
 
 
 def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
@@ -177,17 +255,61 @@ def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
 CredentialRequired = Depends(require_authentication)
 
 
-def require_oidc_token(oidc_token: OidcAuth) -> None:
-    """Declares that the operation accepts only the OpenID Connect scheme.
+def require_current_mfa_assurance(current: CurrentSession) -> AuthenticatedSession:
+    """The session, proven to carry current MFA assurance.
 
-    Belongs on an operation that consumes current MFA assurance:
-    assurance is read from the identity provider's token, which a platform API key cannot carry.
-    Verification and assurance evaluation are :func:`verify_token` and :func:`require_current_mfa_assurance`.
+    Identity, not authorization: role gates (e.g. IDR-016's admin-only
+    verification) stay with the operation. Currency is
+    `settings.auth_mfa_assurance_max_age_seconds` against the database clock;
+    a step-up `POST /auth/mfa/verify` refreshes the stamp.
+    """
+    if not current.mfa_enrolled:
+        raise ProblemException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This operation requires MFA: "
+                "enroll via POST /auth/mfa/enroll first."
+            ),
+            problem_type=problem_type_uri("mfa-enrollment-required"),
+        )
+    max_age = timedelta(seconds=settings.auth_mfa_assurance_max_age_seconds)
+    if (
+        current.mfa_verified_at is None
+        or current.observed_at is None
+        or current.observed_at - current.mfa_verified_at >= max_age
+    ):
+        raise ProblemException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "MFA assurance has aged out: "
+                "step up via POST /auth/mfa/verify."
+            ),
+            problem_type=problem_type_uri("mfa-stepup-required"),
+        )
+    return current
+
+
+# Attach as `dependencies=[MfaAssuranceRequired]`, or take the parameter form
+# `CurrentMfaAssuredSession` when the handler needs the identity.
+MfaAssuranceRequired = Depends(require_current_mfa_assurance)
+CurrentMfaAssuredSession = Annotated[
+    AuthenticatedSession, Depends(require_current_mfa_assurance)
+]
+
+
+def declare_mfa_assurance(token: SessionAuth) -> None:
+    """Declares the SessionCookie scheme and its assurance rule, enforcing nothing.
+
+    The parameter list is the entire effect. Belongs on assurance-gated
+    operations that are still live mocks (assets verification, API keys):
+    B6 and the API-key story swap this for the live
+    :data:`MfaAssuranceRequired` when the handlers become real — a live gate
+    today would put a full enroll flow in front of mock sample data.
     """
 
 
-# Attach as `dependencies=[OidcRequired]` on an operation.
-OidcRequired = Depends(require_oidc_token)
+# Attach as `dependencies=[MfaAssuranceDeclared]` on a mock operation.
+MfaAssuranceDeclared = Depends(declare_mfa_assurance)
 
 
 def verify_token(token: str) -> dict[str, object]:
@@ -203,15 +325,6 @@ def verify_api_key(key: str) -> None:
     """Validates a platform API key against its stored hash.
 
     A failure answers `401`.
-    """
-    raise NotImplementedError
-
-
-def require_current_mfa_assurance(claims: dict[str, object]) -> None:
-    """Rejects claims whose authentication event lacks current MFA assurance.
-
-    Assurance is `amr` carrying an MFA method within the configured `max_age`.
-    A failure answers `401` with the RFC 9470 `insufficient_user_authentication` challenge.
     """
     raise NotImplementedError
 

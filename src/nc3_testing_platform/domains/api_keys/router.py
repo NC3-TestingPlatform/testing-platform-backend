@@ -1,7 +1,11 @@
 """API key management.
 
-Every operation here requires current MFA assurance, read from the OIDC token
-at request time.
+Key creation and revocation require current MFA assurance, read from the
+platform session (B4). The handlers are still live mocks, so they carry the
+declaration-only `MfaAssuranceDeclared` — the API-key story swaps in the live
+`MfaAssuranceRequired` when they become real. The list operation deliberately
+keeps the weaker `CredentialRequired` declaration: reading key metadata is not
+an assurance-gated act, only minting and revoking are.
 """
 
 from datetime import UTC, datetime
@@ -16,7 +20,7 @@ from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     NO_STORE_HEADERS,
     CredentialRequired,
-    OidcRequired,
+    MfaAssuranceDeclared,
 )
 from nc3_testing_platform.domains.api_keys.schemas import (
     ApiKey,
@@ -74,7 +78,7 @@ async def list_api_keys(page: CursorPage) -> Page[ApiKey]:
         201: {"headers": NO_STORE_HEADERS},
         **problem_responses(401, 403, 422),
     },
-    dependencies=[OidcRequired],
+    dependencies=[MfaAssuranceDeclared],
 )
 async def create_api_key(body: ApiKeyCreate, response: Response) -> ApiKeyCreated:
     """Issue a key and return its secret once.
@@ -93,7 +97,7 @@ async def create_api_key(body: ApiKeyCreate, response: Response) -> ApiKeyCreate
     "/{key_id}/revoke",
     summary="Revoke an API key",
     responses=problem_responses(401, 403, 404, 409),
-    dependencies=[OidcRequired],
+    dependencies=[MfaAssuranceDeclared],
 )
 async def revoke_api_key(key_id: ResourceId, body: ApiKeyRevoke) -> ApiKey:
     """Stop a key working while keeping its row.
