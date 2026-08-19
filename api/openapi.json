@@ -104,7 +104,7 @@
           "auth"
         ],
         "summary": "Log in with email and password",
-        "description": "Open a server-side session and set the `__Host-session` cookie.\n\nUnknown email, disabled account, and wrong password all answer the same\n`401`. A locked account answers `429` with `Retry-After`.",
+        "description": "Open a server-side session and set the `__Host-session` cookie.\n\nUnknown email, disabled account, and wrong password all answer the same\n`401`. A locked account answers `429` with `Retry-After`. An MFA-enrolled\naccount receives a **pending** session (`mfa_required` true, profile\nfields withheld): complete login via `POST /auth/mfa/verify`.",
         "operationId": "login_api_v1_auth_login_post",
         "requestBody": {
           "content": {
@@ -196,7 +196,7 @@
           "auth"
         ],
         "summary": "The authenticated session",
-        "description": "The current user, organization, and server-side expiry horizon.",
+        "description": "The current user, organization, and server-side expiry horizon.\n\nAccepts a pending-MFA session, reporting `mfa_required` with the profile\nfields withheld, so a reload mid-login can render the second-factor step.",
         "operationId": "read_session_api_v1_auth_session_get",
         "responses": {
           "200": {
@@ -233,7 +233,7 @@
           "auth"
         ],
         "summary": "Log out",
-        "description": "Revoke the session server-side and clear the cookie.",
+        "description": "Revoke the session server-side and clear the cookie.\n\nAccepts a pending-MFA session: revocation needs no assurance, and an\nabandoned or suspect pending login must be killable on the spot.",
         "operationId": "logout_api_v1_auth_logout_post",
         "responses": {
           "204": {
@@ -311,6 +311,548 @@
           },
           "500": {
             "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/enroll": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Start TOTP enrollment",
+        "description": "Mint a TOTP seed and return the provisioning material once.\n\nRequires the current password — enrollment is a privilege change. A\nconfirmed factor answers `409`: disable it first. Restarting an\nunconfirmed enrollment replaces the seed.",
+        "operationId": "enroll_mfa_api_v1_auth_mfa_enroll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaEnrollSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MfaEnrollment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/confirm": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirm enrollment and mint the recovery codes",
+        "description": "Prove possession of the authenticator and activate the factor.\n\nThe calling session becomes assured and every other session is revoked\n(privilege change). The recovery codes are shown exactly once.",
+        "operationId": "confirm_mfa_api_v1_auth_mfa_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaConfirmSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "RateLimit": {
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "Advertised quota policy, e.g. `100;w=60`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the quota resets. Sent with `429`.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Complete login or refresh MFA assurance",
+        "description": "Present a TOTP or recovery code against the confirmed factor.\n\nOn a pending session this completes login: the session is rotated and\nthe fresh cookie set (assurance starts now). On an assured session it\nrefreshes the assurance stamp in place — the step-up for operations that\nanswer `403` with problem type `mfa-stepup-required`.",
+        "operationId": "verify_mfa_api_v1_auth_mfa_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaVerifySubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "RateLimit": {
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "Advertised quota policy, e.g. `100;w=60`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the quota resets. Sent with `429`.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/recovery-codes": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Regenerate the recovery codes",
+        "description": "Replace the whole recovery-code set; the previous set stops working.\n\nRequires current MFA assurance and the current password: a hijacked\nassured session must not silently invalidate the owner's codes.",
+        "operationId": "regenerate_recovery_codes_api_v1_auth_mfa_recovery_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCodesRegenerateSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodes"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/disable": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Disable MFA",
+        "description": "Soft-revoke the factor behind fresh assurance, password, and a code.\n\nSessions rotate (privilege change): the new cookie is set on this\nresponse, other sessions are revoked. Spent material stays behind for\nincident response; nothing is hard-deleted.",
+        "operationId": "disable_mfa_api_v1_auth_mfa_disable_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfaDisableSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "RateLimit": {
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Policy": {
+                "description": "Advertised quota policy, e.g. `100;w=60`.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the quota resets. Sent with `429`.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1698,11 +2240,11 @@
           "assets"
         ],
         "summary": "Start a verification challenge",
-        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the OIDC token rather than from any\nstored flag — proving control of a domain is what later authorizes scanning it.\n\nOn an already-verified asset the response carries both the standing proof and\nthe new challenge, so coverage in force is never withdrawn while ownership is\nre-proven.",
+        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the platform session rather than\nfrom any stored User flag (declaration-only while this handler is a mock;\nB6 swaps in the live gate) — proving control of a domain is what later\nauthorizes scanning it.\n\nOn an already-verified asset the response carries both the standing proof and\nthe new challenge, so coverage in force is never withdrawn while ownership is\nre-proven.",
         "operationId": "create_verification_api_v1_assets__asset_id__verification_post",
         "security": [
           {
-            "OpenIdConnect": []
+            "SessionCookie": []
           }
         ],
         "parameters": [
@@ -4509,7 +5051,7 @@
         "operationId": "create_api_key_api_v1_api_keys_post",
         "security": [
           {
-            "OpenIdConnect": []
+            "SessionCookie": []
           }
         ],
         "requestBody": {
@@ -4584,7 +5126,7 @@
         "operationId": "revoke_api_key_api_v1_api_keys__key_id__revoke_post",
         "security": [
           {
-            "OpenIdConnect": []
+            "SessionCookie": []
           }
         ],
         "parameters": [
@@ -6314,6 +6856,139 @@
         "title": "MemberRoleUpdate",
         "description": "Change a member's role.\n\nRejected when it would remove the last enabled administrator — an organization\nthat cannot administer itself has no route back without operator intervention."
       },
+      "MfaConfirmSubmission": {
+        "properties": {
+          "totp_code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "title": "Totp Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "totp_code"
+        ],
+        "title": "MfaConfirmSubmission",
+        "description": "Prove possession of the enrolled authenticator."
+      },
+      "MfaDisableSubmission": {
+        "properties": {
+          "totp_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totp Code"
+          },
+          "recovery_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 24,
+                "minLength": 16,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Code"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "MfaDisableSubmission",
+        "description": "Disable MFA: the current password plus one valid code."
+      },
+      "MfaEnrollSubmission": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "MfaEnrollSubmission",
+        "description": "Start TOTP enrollment; re-authenticates with the current password.\n\nThe password gate keeps a stolen session cookie from planting an\nattacker-controlled factor (US #80 plan rev 2)."
+      },
+      "MfaEnrollment": {
+        "properties": {
+          "secret_base32": {
+            "type": "string",
+            "title": "Secret Base32",
+            "description": "The seed for manual authenticator entry (base32)."
+          },
+          "otpauth_uri": {
+            "type": "string",
+            "title": "Otpauth Uri",
+            "description": "The `otpauth://totp/...` URI behind the QR code."
+          }
+        },
+        "type": "object",
+        "required": [
+          "secret_base32",
+          "otpauth_uri"
+        ],
+        "title": "MfaEnrollment",
+        "description": "The TOTP provisioning material, shown exactly once."
+      },
+      "MfaVerifySubmission": {
+        "properties": {
+          "totp_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totp Code"
+          },
+          "recovery_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 24,
+                "minLength": 16,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Code"
+          }
+        },
+        "type": "object",
+        "title": "MfaVerifySubmission",
+        "description": "Exactly one of the two second-factor code forms."
+      },
       "Notification": {
         "properties": {
           "id": {
@@ -6828,6 +7503,41 @@
         ],
         "title": "ProblemDetail",
         "description": "RFC 9457 problem detail."
+      },
+      "RecoveryCodes": {
+        "properties": {
+          "recovery_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Recovery Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recovery_codes"
+        ],
+        "title": "RecoveryCodes",
+        "description": "The full active recovery-code set, shown exactly once."
+      },
+      "RecoveryCodesRegenerateSubmission": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "RecoveryCodesRegenerateSubmission",
+        "description": "Replace the recovery-code set; re-authenticates with the password."
       },
       "RegisteredUser": {
         "properties": {
@@ -8325,7 +9035,14 @@
             "title": "Display Name"
           },
           "organization_role": {
-            "$ref": "#/components/schemas/OrganizationRole"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrganizationRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "session_created_at": {
             "type": "string",
@@ -8346,6 +9063,51 @@
             "type": "string",
             "format": "date-time",
             "title": "Absolute Expires At"
+          },
+          "mfa_enrolled": {
+            "type": "boolean",
+            "title": "Mfa Enrolled",
+            "default": false
+          },
+          "mfa_required": {
+            "type": "boolean",
+            "title": "Mfa Required",
+            "default": false
+          },
+          "mfa_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Verified At"
+          },
+          "mfa_assurance_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfa Assurance Expires At"
+          },
+          "recovery_codes_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Codes Remaining"
           }
         },
         "type": "object",
@@ -8353,14 +9115,13 @@
           "user_id",
           "organization_id",
           "email",
-          "organization_role",
           "session_created_at",
           "last_seen_at",
           "idle_expires_at",
           "absolute_expires_at"
         ],
         "title": "SessionInfo",
-        "description": "The authenticated session and its server-side expiry horizon.\n\n`idle_expires_at` moves with activity; `absolute_expires_at` never does.\nWhichever passes first ends the session (Non-functional v0.11)."
+        "description": "The authenticated session and its server-side expiry horizon.\n\n`idle_expires_at` moves with activity; `absolute_expires_at` never does.\nWhichever passes first ends the session (Non-functional v0.11).\n\nWhile `mfa_required` is true the session is pending its second factor:\nonly `POST /auth/mfa/verify`, `POST /auth/logout`, and this view accept\nit, and the profile fields (`display_name`, `organization_role`) are\nwithheld — a correct password alone reveals nothing it did not prove."
       },
       "SeverityCounts": {
         "properties": {
@@ -8924,12 +9685,12 @@
       },
       "OpenIdConnect": {
         "type": "openIdConnect",
-        "description": "OpenID Connect token issued by the platform identity provider. Some operations additionally require current MFA assurance, read from the token at request time.",
+        "description": "OpenID Connect token — the federation seam of a later SSO phase; v4.0 ships no SSO and issues no tokens. When federation lands, the token's `amr`/`auth_time` populate the platform session's MFA assurance at login; the currency rule stays platform-side.",
         "openIdConnectUrl": "https://idp.example.invalid/.well-known/openid-configuration"
       },
       "ApiKey": {
         "type": "apiKey",
-        "description": "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` and `full_scan`. A scan launched with a key is recorded with `source = api`. Creating or revoking a key requires an OpenID Connect token with current MFA assurance.",
+        "description": "Platform API key: `Authorization: Bearer <key>`. Scopes are `read_only` and `full_scan`. A scan launched with a key is recorded with `source = api`. Creating or revoking a key requires a browser session with current MFA assurance — a key carries no assurance.",
         "in": "header",
         "name": "Authorization"
       }
