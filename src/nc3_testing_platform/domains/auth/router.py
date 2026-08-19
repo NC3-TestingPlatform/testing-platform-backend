@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 
+from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.api_db import AuthDbSession
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.security import (
@@ -189,6 +190,9 @@ def login(
             detail="Invalid email or password.",
         ) from None
     _set_session_cookie(response, result.token)
+    # The service committed (durability before the response), which ended the
+    # SET LOCAL context; the body's MFA-status read needs the user arm again.
+    rls.set_user_context(db, result.user.id)
     return _session_info(db, result.user, result.session)
 
 
@@ -400,6 +404,8 @@ def verify_mfa(
         raise _mfa_locked(exc) from None
     except service.InvalidMfaCodeError:
         raise _INVALID_CODE from None
+    # Same post-commit context re-assertion as the login handler.
+    rls.set_user_context(db, current.user_id)
     if result is not None:
         _set_session_cookie(response, result.token)
         return _session_info(db, result.user, result.session)

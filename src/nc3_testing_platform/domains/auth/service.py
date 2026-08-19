@@ -13,6 +13,14 @@ explicitly before raising — the request dependency rolls back on an escaping
 exception, and a brute-force counter a failed login rolls back would count
 nothing.
 
+Success paths that mint client-actionable state (an account, a session
+token, an assurance stamp, recovery codes) also commit explicitly before
+returning: the unit-of-work commit lives in dependency teardown, which runs
+after the response is sent, so an immediate follow-up request — register →
+login, login → verify — would otherwise race its own durability (observed
+live, US #80). The teardown commit remains as the safety net for writes that
+need no read-your-response guarantee, like the session touch.
+
 Log lines carry UUIDs only: email addresses are PII and stay out of shared
 logs (Non-functional → GDPR); actor evidence goes into the encrypted consent
 receipts instead.
@@ -274,6 +282,8 @@ def register(
         org_id,
         user_id,
     )
+    # Durable before the 201: the client's very next call is the login.
+    db.commit()
     return user
 
 
@@ -320,6 +330,7 @@ def login(db: Session, *, email: str, password: SecretStr) -> LoginResult:
         raise InvalidCredentialsError
     token, session = _open_session(db, row.user_id)
     logger.info("login succeeded for user %s", row.user_id)
+    db.commit()
     return LoginResult(token=token, user=user, session=session)
 
 
@@ -369,6 +380,7 @@ def _open_session(
 def logout(db: Session, session_id: uuid.UUID) -> None:
     """Revoke the session; the router clears the cookie."""
     repository.revoke_session(db, session_id)
+    db.commit()
 
 
 def session_snapshot(
@@ -425,6 +437,7 @@ def change_password(
         raise WrongCurrentPasswordError
     token, session = _open_session(db, user_id)
     logger.info("password changed for user %s; sessions rotated", user_id)
+    db.commit()
     return LoginResult(token=token, user=user, session=session)
 
 
@@ -643,6 +656,7 @@ def confirm_mfa(
         db, user_id, [totp.hash_recovery_code(code) for code in codes]
     )
     logger.info("mfa confirmed for user %s; other sessions revoked", user_id)
+    db.commit()
     return codes
 
 
@@ -680,6 +694,7 @@ def verify_mfa(
     if not pending:
         repository.stamp_session_assurance(db, session_id)
         logger.info("mfa step-up refreshed for user %s", user_id)
+        db.commit()
         return None
     repository.revoke_session(db, session_id)
     user = repository.user_by_id(db, user_id)
@@ -687,6 +702,7 @@ def verify_mfa(
         raise MfaNotEnrolledError
     token, session = _open_session(db, user_id, assured_at=observed_at)
     logger.info("mfa verify completed login for user %s", user_id)
+    db.commit()
     return LoginResult(token=token, user=user, session=session)
 
 
@@ -734,6 +750,7 @@ def disable_mfa(
         raise WrongCurrentPasswordError
     token, session = _open_session(db, user_id)
     logger.warning("mfa disabled for user %s; sessions rotated", user_id)
+    db.commit()
     return LoginResult(token=token, user=user, session=session)
 
 
@@ -757,6 +774,7 @@ def regenerate_recovery_codes(
         db, user_id, [totp.hash_recovery_code(code) for code in codes]
     )
     logger.warning("recovery codes regenerated for user %s", user_id)
+    db.commit()
     return codes
 
 
