@@ -9,13 +9,23 @@ import json
 from collections.abc import Iterator
 from http import HTTPStatus
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
+
+# Problem `type` URIs are URNs under this prefix: stable, deployment-agnostic
+# (the platform is self-hostable, so no https URL), kebab-case slugs. The
+# registry of slugs lives in the API design reference (Error contract).
+PROBLEM_TYPE_PREFIX = "urn:nc3:testing-platform:problem:"
+
+
+def problem_type_uri(slug: str) -> str:
+    """The full problem `type` URN for a registered kebab-case slug."""
+    return f"{PROBLEM_TYPE_PREFIX}{slug}"
 _PROBLEM_REF = "#/components/schemas/ProblemDetail"
 _VALIDATION_REF = "#/components/schemas/HTTPValidationError"
 _FASTAPI_VALIDATION_SCHEMAS = ("HTTPValidationError", "ValidationError")
@@ -56,6 +66,26 @@ class ProblemResponse(JSONResponse):
     media_type = PROBLEM_MEDIA_TYPE
 
 
+class ProblemException(HTTPException):
+    """An `HTTPException` carrying an RFC 9457 problem `type` discriminator.
+
+    Raise this instead of `HTTPException` when a client must branch on the
+    refusal machine-readably: `type` is the stable discriminator, `detail`
+    stays prose. Plain `HTTPException`s keep the `about:blank` default.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str | None = None,
+        headers: dict[str, str] | None = None,
+        *,
+        problem_type: str,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.problem_type = problem_type
+
+
 def problem_responses(*status_codes: int) -> dict[int | str, dict]:
     """Build an OpenAPI `responses` map where each code references `ProblemDetail`.
 
@@ -76,6 +106,7 @@ async def _http_exception_handler(
     request: Request, exc: StarletteHTTPException
 ) -> ProblemResponse:
     problem = ProblemDetail(
+        type=getattr(exc, "problem_type", "about:blank"),
         title=HTTPStatus(exc.status_code).phrase,
         status=exc.status_code,
         detail=exc.detail if isinstance(exc.detail, str) else None,
