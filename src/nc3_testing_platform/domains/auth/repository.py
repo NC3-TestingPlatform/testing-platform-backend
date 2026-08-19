@@ -159,7 +159,7 @@ def consume_recovery_code(
     requests presenting the same code race on the row lock, and the loser's
     WHERE no longer matches — never SELECT-then-UPDATE.
     """
-    result = db.execute(
+    spent_id = db.execute(
         sa.update(MfaRecoveryCode)
         .where(
             MfaRecoveryCode.user_id == user_id,
@@ -168,8 +168,9 @@ def consume_recovery_code(
             MfaRecoveryCode.superseded_at.is_(None),
         )
         .values(used_at=sa.func.now())
-    )
-    return result.rowcount == 1
+        .returning(MfaRecoveryCode.id)
+    ).scalar_one_or_none()
+    return spent_id is not None
 
 
 def stamp_session_assurance(db: Session, session_id: uuid.UUID) -> None:

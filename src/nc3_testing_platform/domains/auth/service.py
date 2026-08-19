@@ -38,8 +38,12 @@ from nc3_testing_platform.core import crypto, rls
 from nc3_testing_platform.core.enums import KeyScope, OrganizationRole
 from nc3_testing_platform.core.security import hash_session_token
 from nc3_testing_platform.core.settings import settings
-from nc3_testing_platform.domains.auth import repository
-from nc3_testing_platform.domains.auth.models import UserCredential, UserSession
+from nc3_testing_platform.domains.auth import repository, totp
+from nc3_testing_platform.domains.auth.models import (
+    UserCredential,
+    UserMfa,
+    UserSession,
+)
 from nc3_testing_platform.domains.auth.schemas import RegistrationSubmission
 from nc3_testing_platform.domains.org.models import (
     AppUser,
@@ -56,6 +60,7 @@ _ENVELOPE_AAD = b"key_envelope.wrapped_kek"
 _CREDENTIAL_AAD = b"user_credential.password"
 _EVIDENCE_AAD = b"statement_response.evidence"
 _DEK_AAD = b"statement_response.wrapped_dek"
+_MFA_SECRET_AAD = b"user_mfa.totp_secret"
 
 # The local issuer of identity projection (OIDC-ready: issuer + subject).
 _LOCAL_SUBJECT_PREFIX = "local:"
@@ -99,7 +104,27 @@ class AccountLockedError(Exception):
 
 
 class WrongCurrentPasswordError(Exception):
-    """Password change refused: the current password did not verify."""
+    """A step-up action refused: the current password did not verify."""
+
+
+class MfaAlreadyEnrolledError(Exception):
+    """MFA is already confirmed — disable it before re-enrolling."""
+
+
+class MfaNotEnrolledError(Exception):
+    """No confirmed (or, for confirm, started) MFA enrollment exists."""
+
+
+class InvalidMfaCodeError(Exception):
+    """Wrong, replayed, or already-spent code — one indistinguishable answer."""
+
+
+class MfaLockedError(Exception):
+    """MFA verification is locked out after repeated failures."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"locked for {retry_after_seconds}s")
 
 
 @dataclass(frozen=True)
@@ -109,6 +134,14 @@ class LoginResult:
     token: str
     user: AppUser
     session: UserSession
+
+
+@dataclass(frozen=True)
+class MfaEnrollment:
+    """The TOTP provisioning material, shown once at enrollment."""
+
+    secret_base32: str
+    otpauth_uri: str
 
 
 def _encrypt_password(password: SecretStr, user_kek: bytes) -> bytes:
@@ -319,9 +352,15 @@ def _record_failure(
     db.commit()
 
 
-def _open_session(db: Session, user_id: uuid.UUID) -> tuple[str, UserSession]:
+def _open_session(
+    db: Session, user_id: uuid.UUID, *, assured_at: datetime | None = None
+) -> tuple[str, UserSession]:
     token = secrets.token_urlsafe(32)
-    session = UserSession(user_id=user_id, token_hash=hash_session_token(token))
+    session = UserSession(
+        user_id=user_id,
+        token_hash=hash_session_token(token),
+        mfa_verified_at=assured_at,
+    )
     db.add(session)
     db.flush()
     return token, session
@@ -372,17 +411,10 @@ def change_password(
 
     :raises WrongCurrentPasswordError: When the current password does not verify.
     """
+    user_kek = _verify_current_password(db, user_id, current_password)
     credential = repository.credential_for(db, user_id)
     if credential is None:  # pragma: no cover - registration always creates it
         raise WrongCurrentPasswordError
-    user_kek = _unwrap_user_kek(db, user_id)
-    stored = crypto.decrypt(
-        credential.password_ciphertext, user_kek, aad=_CREDENTIAL_AAD
-    ).decode("ascii")
-    try:
-        _hasher.verify(stored, current_password.get_secret_value())
-    except VerifyMismatchError:
-        raise WrongCurrentPasswordError from None
 
     credential.password_ciphertext = _encrypt_password(new_password, user_kek)
     credential.password_updated_at = sa.func.now()
@@ -394,3 +426,345 @@ def change_password(
     token, session = _open_session(db, user_id)
     logger.info("password changed for user %s; sessions rotated", user_id)
     return LoginResult(token=token, user=user, session=session)
+
+
+# --- MFA (B4 / US #80). Log lines carry UUIDs and event names only: the
+# secret, the otpauth URI, and the recovery codes are never logged.
+
+
+def _verify_current_password(
+    db: Session, user_id: uuid.UUID, password: SecretStr
+) -> bytes:
+    """Verify the password and return the unwrapped user KEK.
+
+    The shared step-up gate: password change, MFA enrollment, disable, and
+    recovery-code regeneration all re-authenticate — a stolen session cookie
+    alone must not reach any of them.
+
+    :raises WrongCurrentPasswordError: When the password does not verify.
+    """
+    credential = repository.credential_for(db, user_id)
+    if credential is None:  # pragma: no cover - registration always creates it
+        raise WrongCurrentPasswordError
+    user_kek = _unwrap_user_kek(db, user_id)
+    stored = crypto.decrypt(
+        credential.password_ciphertext, user_kek, aad=_CREDENTIAL_AAD
+    ).decode("ascii")
+    try:
+        _hasher.verify(stored, password.get_secret_value())
+    except VerifyMismatchError:
+        raise WrongCurrentPasswordError from None
+    return user_kek
+
+
+def _db_now(db: Session) -> datetime:
+    """The database clock, so every lockout comparison matches the stamps."""
+    return db.execute(sa.select(sa.func.now())).scalar_one()
+
+
+def _confirmed_mfa(db: Session, user_id: uuid.UUID) -> UserMfa:
+    """The user's confirmed factor row.
+
+    :raises MfaNotEnrolledError: When no confirmed enrollment exists.
+    """
+    row = repository.mfa_for(db, user_id)
+    if row is None or row.confirmed_at is None or row.totp_secret_ciphertext is None:
+        raise MfaNotEnrolledError
+    return row
+
+
+def _require_mfa_unlocked(row: UserMfa, observed_at: datetime) -> None:
+    if row.locked_until is not None and row.locked_until > observed_at:
+        remaining = row.locked_until - observed_at
+        raise MfaLockedError(int(remaining.total_seconds()) + 1)
+
+
+def _record_mfa_failure(
+    db: Session, row: UserMfa, *, observed_at: datetime
+) -> None:
+    """Count one failed code; escalate the lockout at the threshold; persist.
+
+    Stricter than the password lockout and escalating (doubling per
+    consecutive lockout, capped): a 6-digit code space cannot afford the
+    login numbers (`core/settings.py`). Commits explicitly, like
+    :func:`_record_failure` — the caller raises next.
+    """
+    row.failed_count += 1
+    if row.failed_count >= settings.auth_mfa_failed_threshold:
+        row.lockout_count += 1
+        duration = min(
+            settings.auth_mfa_lockout_base_seconds * 2 ** (row.lockout_count - 1),
+            settings.auth_mfa_lockout_cap_seconds,
+        )
+        row.locked_until = observed_at + timedelta(seconds=duration)
+        row.failed_count = 0
+        logger.warning(
+            "mfa lockout %d applied to user %s for %ds",
+            row.lockout_count,
+            row.user_id,
+            duration,
+        )
+    db.commit()
+
+
+def _spend_code(
+    db: Session,
+    row: UserMfa,
+    *,
+    user_id: uuid.UUID,
+    observed_at: datetime,
+    totp_code: str | None,
+    recovery_code: SecretStr | None,
+) -> None:
+    """Verify and consume one second-factor code against the confirmed row.
+
+    Wrong, replayed, and already-spent codes are one indistinguishable
+    :class:`InvalidMfaCodeError`, each counted toward the escalating lockout.
+    On success the failure counters reset.
+    """
+    if totp_code is not None:
+        ciphertext = row.totp_secret_ciphertext
+        if ciphertext is None:  # pragma: no cover - _confirmed_mfa proved it
+            raise MfaNotEnrolledError
+        secret = crypto.decrypt(
+            ciphertext, _unwrap_user_kek(db, user_id), aad=_MFA_SECRET_AAD
+        )
+        step = totp.matching_step(
+            secret, totp_code, at_step=totp.step_at(observed_at.timestamp())
+        )
+        # Replay refusal: a step at or before the last accepted one is spent.
+        # Deliberate consequence: after accepting step N+1 (clock skew), the
+        # user's next code can be refused for up to one step (60 s).
+        if step is None or (
+            row.last_used_step is not None and step <= row.last_used_step
+        ):
+            _record_mfa_failure(db, row, observed_at=observed_at)
+            raise InvalidMfaCodeError
+        row.last_used_step = step
+    elif recovery_code is not None:
+        spent = repository.consume_recovery_code(
+            db, user_id, totp.hash_recovery_code(recovery_code.get_secret_value())
+        )
+        if not spent:
+            _record_mfa_failure(db, row, observed_at=observed_at)
+            raise InvalidMfaCodeError
+        logger.warning(
+            "recovery code spent by user %s; %d remain",
+            user_id,
+            repository.unused_recovery_code_count(db, user_id),
+        )
+    else:
+        raise ValueError("one of totp_code or recovery_code is required")
+    row.failed_count = 0
+    row.lockout_count = 0
+    row.locked_until = None
+
+
+def enroll_mfa(
+    db: Session, *, user_id: uuid.UUID, password: SecretStr
+) -> MfaEnrollment:
+    """Start (or restart) TOTP enrollment; a confirmed factor refuses.
+
+    Requires the current password: enrollment is a privilege change, and a
+    stolen session must not be able to plant an attacker factor. Restarting
+    an unconfirmed enrollment replaces the seed. The plaintext material
+    exists only in the returned value.
+
+    :raises WrongCurrentPasswordError: When the password does not verify.
+    :raises MfaAlreadyEnrolledError: When a confirmed factor exists.
+    """
+    user_kek = _verify_current_password(db, user_id, password)
+    row = repository.mfa_for(db, user_id)
+    if row is not None and row.confirmed_at is not None:
+        raise MfaAlreadyEnrolledError
+    secret = totp.generate_secret()
+    ciphertext = crypto.encrypt(secret, user_kek, aad=_MFA_SECRET_AAD)
+    if row is None:
+        db.add(UserMfa(user_id=user_id, totp_secret_ciphertext=ciphertext))
+    else:
+        row.totp_secret_ciphertext = ciphertext
+        row.last_used_step = None
+        row.failed_count = 0
+    db.flush()
+    user = repository.user_by_id(db, user_id)
+    if user is None:  # pragma: no cover - the session just proved it exists
+        raise WrongCurrentPasswordError
+    logger.info("mfa enrollment started for user %s", user_id)
+    return MfaEnrollment(
+        secret_base32=totp.secret_base32(secret),
+        otpauth_uri=totp.provisioning_uri(
+            secret, account_name=user.email, issuer=settings.auth_totp_issuer
+        ),
+    )
+
+
+def confirm_mfa(
+    db: Session, *, user_id: uuid.UUID, session_id: uuid.UUID, code: str
+) -> list[str]:
+    """Prove possession, activate the factor, and mint the recovery codes.
+
+    The calling session is stamped assured — possession was just proven —
+    and every other session is revoked, the same privilege-change treatment
+    as a password change. The returned codes exist only in this value.
+
+    :raises MfaNotEnrolledError: When no enrollment was started.
+    :raises MfaAlreadyEnrolledError: When the factor is already confirmed.
+    :raises MfaLockedError: While the MFA lockout stands.
+    :raises InvalidMfaCodeError: When the code does not verify.
+    """
+    row = repository.mfa_for(db, user_id)
+    if row is None or row.totp_secret_ciphertext is None:
+        raise MfaNotEnrolledError
+    if row.confirmed_at is not None:
+        raise MfaAlreadyEnrolledError
+    observed_at = _db_now(db)
+    _require_mfa_unlocked(row, observed_at)
+    secret = crypto.decrypt(
+        row.totp_secret_ciphertext,
+        _unwrap_user_kek(db, user_id),
+        aad=_MFA_SECRET_AAD,
+    )
+    step = totp.matching_step(
+        secret, code, at_step=totp.step_at(observed_at.timestamp())
+    )
+    if step is None:
+        _record_mfa_failure(db, row, observed_at=observed_at)
+        raise InvalidMfaCodeError
+    row.confirmed_at = observed_at
+    row.last_used_step = step
+    row.failed_count = 0
+    row.lockout_count = 0
+    row.locked_until = None
+    repository.stamp_session_assurance(db, session_id)
+    repository.revoke_other_sessions(db, user_id, keep_session_id=session_id)
+    codes = totp.generate_recovery_codes()
+    repository.burn_recovery_codes(db, user_id)
+    repository.insert_recovery_codes(
+        db, user_id, [totp.hash_recovery_code(code) for code in codes]
+    )
+    logger.info("mfa confirmed for user %s; other sessions revoked", user_id)
+    return codes
+
+
+def verify_mfa(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    pending: bool,
+    totp_code: str | None = None,
+    recovery_code: SecretStr | None = None,
+) -> LoginResult | None:
+    """Complete a pending login, or refresh assurance on an assured session.
+
+    A pending session is revoked and replaced — rotation on the
+    pending→assured privilege change — and the fresh `LoginResult` carries
+    the new cookie token. An assured session refreshes its stamp in place
+    and returns ``None``.
+
+    :raises MfaNotEnrolledError: When no confirmed factor exists.
+    :raises MfaLockedError: While the MFA lockout stands.
+    :raises InvalidMfaCodeError: When the code does not verify.
+    """
+    row = _confirmed_mfa(db, user_id)
+    observed_at = _db_now(db)
+    _require_mfa_unlocked(row, observed_at)
+    _spend_code(
+        db,
+        row,
+        user_id=user_id,
+        observed_at=observed_at,
+        totp_code=totp_code,
+        recovery_code=recovery_code,
+    )
+    if not pending:
+        repository.stamp_session_assurance(db, session_id)
+        logger.info("mfa step-up refreshed for user %s", user_id)
+        return None
+    repository.revoke_session(db, session_id)
+    user = repository.user_by_id(db, user_id)
+    if user is None:  # pragma: no cover - the session just proved it exists
+        raise MfaNotEnrolledError
+    token, session = _open_session(db, user_id, assured_at=observed_at)
+    logger.info("mfa verify completed login for user %s", user_id)
+    return LoginResult(token=token, user=user, session=session)
+
+
+def disable_mfa(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    current_session_id: uuid.UUID,
+    password: SecretStr,
+    totp_code: str | None = None,
+    recovery_code: SecretStr | None = None,
+) -> LoginResult:
+    """Soft-revoke the factor behind password + a valid code; rotate sessions.
+
+    The row and the spent codes stay behind (`nc3_auth` holds no DELETE):
+    "MFA was disabled at T" is incident-response residue, not garbage.
+
+    :raises WrongCurrentPasswordError: When the password does not verify.
+    :raises MfaNotEnrolledError: When no confirmed factor exists.
+    :raises MfaLockedError: While the MFA lockout stands.
+    :raises InvalidMfaCodeError: When the code does not verify.
+    """
+    row = _confirmed_mfa(db, user_id)
+    observed_at = _db_now(db)
+    _require_mfa_unlocked(row, observed_at)
+    _verify_current_password(db, user_id, password)
+    _spend_code(
+        db,
+        row,
+        user_id=user_id,
+        observed_at=observed_at,
+        totp_code=totp_code,
+        recovery_code=recovery_code,
+    )
+    row.totp_secret_ciphertext = None
+    row.confirmed_at = None
+    row.last_used_step = None
+    repository.burn_recovery_codes(db, user_id)
+    repository.revoke_other_sessions(
+        db, user_id, keep_session_id=current_session_id
+    )
+    repository.revoke_session(db, current_session_id)
+    user = repository.user_by_id(db, user_id)
+    if user is None:  # pragma: no cover - the session just proved it exists
+        raise WrongCurrentPasswordError
+    token, session = _open_session(db, user_id)
+    logger.warning("mfa disabled for user %s; sessions rotated", user_id)
+    return LoginResult(token=token, user=user, session=session)
+
+
+def regenerate_recovery_codes(
+    db: Session, *, user_id: uuid.UUID, password: SecretStr
+) -> list[str]:
+    """Replace the whole recovery-code set; the old set is burned.
+
+    The router additionally requires current assurance; the password gate
+    here keeps a hijacked assured session from silently invalidating the
+    owner's codes.
+
+    :raises WrongCurrentPasswordError: When the password does not verify.
+    :raises MfaNotEnrolledError: When no confirmed factor exists.
+    """
+    _verify_current_password(db, user_id, password)
+    _confirmed_mfa(db, user_id)
+    codes = totp.generate_recovery_codes()
+    repository.burn_recovery_codes(db, user_id)
+    repository.insert_recovery_codes(
+        db, user_id, [totp.hash_recovery_code(code) for code in codes]
+    )
+    logger.warning("recovery codes regenerated for user %s", user_id)
+    return codes
+
+
+def mfa_status(db: Session, user_id: uuid.UUID) -> tuple[bool, int | None]:
+    """(enrolled, live recovery codes remaining) for the session view."""
+    row = repository.mfa_for(db, user_id)
+    enrolled = row is not None and row.confirmed_at is not None
+    remaining = (
+        repository.unused_recovery_code_count(db, user_id) if enrolled else None
+    )
+    return enrolled, remaining
