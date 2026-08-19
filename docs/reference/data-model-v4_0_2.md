@@ -4,7 +4,7 @@
 
 **Scope:** Based on NC3 Testing Platform v4.0 (MVP) requirements; entities, columns, and constraints.
 
-**Changes from v4.0.1** (ER design review, Taiga #161): the four constraint candidates deferred from the PR #15 review are folded in — lower bounds on `audit_event.retention_until` and `file_upload.purge_due_at`, non-empty `modules` on `scan_job` and `schedule` (§14), and the §3.5 erasure rule for `organization_invitation` rows identifying an erased user. No table, column, or type changes.
+**Changes from v4.0.1** (ER design review, Taiga #161): the four constraint candidates deferred from the PR #15 review are folded in — lower bounds on `audit_event.retention_until` and `file_upload.purge_due_at`, non-empty `modules` on `scan_job` and `schedule` (§14), and the §3.9 erasure rule for `organization_invitation` rows identifying an erased user. No table, column, or type changes.
 
 ## 1. Scope, terminology, and system boundaries
 
@@ -189,21 +189,6 @@ Rules:
 - The plaintext token is sent in the invitation link and is never stored.
 - Acceptance is atomic. It requires an authenticated user whose verified email matches the invitation and who does not already belong to another organization. It sets `accepted_at` and `accepted_by_user_id` together; the latter may become null through user erasure.
 
-### 3.5 User erasure treatment
-
-Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque user-scope `key_envelope.id` value, without a foreign key to the envelope or the user.
-
-| Reference category                     | Examples                                                                                | Erasure behavior                                                                                                                                              |
-|----------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| User-owned operational data            | Notifications and user-owned API keys                                                   | Delete with the user.                                                                                                                                         |
-| Attribution on organization-owned data | Asset creator, scan trigger, verification requester, schedule creator, report generator | Keep the organization-owned row and set the user foreign key to null.                                                                                         |
-| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-scope KEK. Delete the user-scope `key_envelope` during erasure. |
-| Email-addressed invitations            | `organization_invitation.email`                                                         | Delete every invitation row whose normalized email identifies the erased user — the spent invitation that admitted them and any live ones addressed to them. Superseded attempts stay represented in `audit_event`. |
-
-Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, nulls attribution references, and deletes `organization_invitation` rows whose normalized email identifies the erased user, before the request is closed.
-
-Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
-
 ### 3.5 `user_credential` (B3 / US #79)
 
 User-private row: RLS user arm only (`user_id = app.current_user`), granted to the `nc3_auth` role alone — the API service's credential-surface connection. The password hash is argon2id, encrypted (AES-256-GCM, `nonce || ct`) under the user-scope KEK of §3.3, so user erasure crypto-shreds it even out of backups.
@@ -273,6 +258,21 @@ erDiagram
     APP_USER o|--o{ ORGANIZATION_INVITATION: invites
     APP_USER o|--o{ ORGANIZATION_INVITATION: accepts
 ```
+
+### 3.9 User erasure treatment
+
+Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque user-scope `key_envelope.id` value, without a foreign key to the envelope or the user.
+
+| Reference category                     | Examples                                                                                | Erasure behavior                                                                                                                                              |
+|----------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| User-owned operational data            | Notifications and user-owned API keys                                                   | Delete with the user.                                                                                                                                         |
+| Attribution on organization-owned data | Asset creator, scan trigger, verification requester, schedule creator, report generator | Keep the organization-owned row and set the user foreign key to null.                                                                                         |
+| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-scope KEK. Delete the user-scope `key_envelope` during erasure. |
+| Email-addressed invitations            | `organization_invitation.email`                                                         | Delete every invitation row whose normalized email identifies the erased user — the spent invitation that admitted them and any live ones addressed to them. Superseded attempts stay represented in `audit_event`. |
+
+Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, nulls attribution references, and deletes `organization_invitation` rows whose normalized email identifies the erased user, before the request is closed.
+
+Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
 
 ## 4. Assets and domain verification
 
@@ -849,7 +849,7 @@ erDiagram
 
 ## 14. Row-level check constraints
 
-Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Where §3.5 erasure nulls an attribution column, the pairing is one-way instead: the actor implies the time, never the reverse, so erasing a user cannot violate the constraint. Array emptiness is tested with `cardinality`, never `array_length`: `array_length` of an empty array is null, and a CHECK that evaluates to null passes. Cross-row and cross-table rules stay in §13.
+Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Where §3.9 erasure nulls an attribution column, the pairing is one-way instead: the actor implies the time, never the reverse, so erasing a user cannot violate the constraint. Array emptiness is tested with `cardinality`, never `array_length`: `array_length` of an empty array is null, and a CHECK that evaluates to null passes. Cross-row and cross-table rules stay in §13.
 
 | Table                           | Constraint                                                                                                                         | Enforces                                                              |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|

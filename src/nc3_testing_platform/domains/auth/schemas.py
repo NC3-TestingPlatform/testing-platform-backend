@@ -102,7 +102,7 @@ class MfaEnrollSubmission(BaseModel):
     """Start TOTP enrollment; re-authenticates with the current password.
 
     The password gate keeps a stolen session cookie from planting an
-    attacker-controlled factor (US #80 plan rev 2).
+    attacker-controlled factor.
     """
 
     password: SecretStr = _PASSWORD_FIELD

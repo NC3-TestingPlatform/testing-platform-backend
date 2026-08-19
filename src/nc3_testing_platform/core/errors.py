@@ -26,6 +26,16 @@ PROBLEM_TYPE_PREFIX = "urn:nc3:testing-platform:problem:"
 def problem_type_uri(slug: str) -> str:
     """The full problem `type` URN for a registered kebab-case slug."""
     return f"{PROBLEM_TYPE_PREFIX}{slug}"
+
+
+# The registered slugs (API design reference, Error contract). A constant
+# here is checked by the type checker at every call site; a bare string
+# literal at the call site is not, and a typo silently mints a fresh
+# discriminator no client matches.
+PROBLEM_MFA_REQUIRED = problem_type_uri("mfa-required")
+PROBLEM_MFA_ENROLLMENT_REQUIRED = problem_type_uri("mfa-enrollment-required")
+PROBLEM_MFA_STEPUP_REQUIRED = problem_type_uri("mfa-stepup-required")
+
 _PROBLEM_REF = "#/components/schemas/ProblemDetail"
 _VALIDATION_REF = "#/components/schemas/HTTPValidationError"
 _FASTAPI_VALIDATION_SCHEMAS = ("HTTPValidationError", "ValidationError")

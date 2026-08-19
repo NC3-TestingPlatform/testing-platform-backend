@@ -14,7 +14,9 @@ passwords unless `APP_DATABASE_URL` / `AUTH_DATABASE_URL` say otherwise.
 """
 
 import os
+import time
 import uuid
+from base64 import b32decode
 from collections.abc import Iterator
 from typing import Any
 
@@ -27,6 +29,7 @@ from uuid6 import uuid7
 
 from nc3_testing_platform.core import api_db, rls
 from nc3_testing_platform.core.settings import settings
+from nc3_testing_platform.domains.auth import totp
 from nc3_testing_platform.main import app
 
 pytestmark = pytest.mark.postgres
@@ -326,14 +329,9 @@ def test_definer_functions_have_the_hardened_shape() -> None:
 
 def _totp_code(secret_base32: str, offset: int = 0) -> str:
     """A currently valid code for an enrolled seed (real clock)."""
-    import time
-    from base64 import b32decode
-
-    from nc3_testing_platform.domains.auth import totp
-
     secret = b32decode(secret_base32)
     step = totp.step_at(time.time()) + offset
-    return totp._totp(secret).generate(step * totp.TOTP_STEP_SECONDS).decode("ascii")
+    return totp.code_at(secret, step)
 
 
 @pytest.fixture(autouse=True)
@@ -350,16 +348,16 @@ def _roomy_ip_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_mfa_verify_rate_limit", 10_000)
 
 
-def _register_and_login(client: TestClient) -> str:
+def _register_and_login(client: TestClient) -> tuple[str, uuid.UUID]:
     email = _fresh_email()
-    _register(client, email)
+    registered = _register(client, email)
     assert (
         client.post(
             "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
         ).status_code
         == 200
     )
-    return email
+    return email, uuid.UUID(registered["user_id"])
 
 
 def _enroll_and_confirm(client: TestClient) -> tuple[str, list[str]]:
@@ -376,7 +374,7 @@ def _enroll_and_confirm(client: TestClient) -> tuple[str, list[str]]:
 
 def test_mfa_end_to_end_flow(client: TestClient) -> None:
     """Enroll → confirm → pending login → recovery verify → disable, live."""
-    email = _register_and_login(client)
+    email, _ = _register_and_login(client)
 
     # Enrollment is password-gated: a session alone does not plant a factor.
     refused = client.post(
@@ -439,11 +437,13 @@ def test_mfa_end_to_end_flow(client: TestClient) -> None:
 
 def test_stale_assurance_demands_a_stepup(client: TestClient) -> None:
     """An aged stamp answers mfa-stepup-required; a verify refreshes it."""
-    _register_and_login(client)
+    _, user_id = _register_and_login(client)
     secret_base32, _ = _enroll_and_confirm(client)
 
     # Backdate the stamp with the owner connection (deliberately outside the
-    # application policy; the dev/CI owner is a superuser).
+    # application policy; the dev/CI owner is a superuser). Scoped to this
+    # test's user: an unscoped predicate would also catch active, assured
+    # sessions from concurrent tests or workers sharing the database.
     if not _OWNER_URL:
         pytest.skip("DATABASE_URL not set")
     engine = sa.create_engine(_OWNER_URL)
@@ -453,10 +453,12 @@ def test_stale_assurance_demands_a_stepup(client: TestClient) -> None:
                 sa.text(
                     "UPDATE user_session SET mfa_verified_at ="
                     " now() - interval '1 hour'"
-                    " WHERE revoked_at IS NULL AND mfa_verified_at IS NOT NULL"
-                )
+                    " WHERE user_id = :user_id"
+                    " AND revoked_at IS NULL AND mfa_verified_at IS NOT NULL"
+                ),
+                {"user_id": user_id},
             )
-            assert backdated.rowcount >= 1
+            assert backdated.rowcount == 1
     finally:
         engine.dispose()
 

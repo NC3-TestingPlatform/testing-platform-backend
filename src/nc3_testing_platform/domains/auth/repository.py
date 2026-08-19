@@ -173,10 +173,20 @@ def consume_recovery_code(
     return spent_id is not None
 
 
-def stamp_session_assurance(db: Session, session_id: uuid.UUID) -> None:
-    """Refresh the session's MFA assurance stamp (step-up verify)."""
-    db.execute(
-        sa.update(UserSession)
-        .where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
-        .values(mfa_verified_at=sa.func.now())
+def stamp_session_assurance(db: Session, session_id: uuid.UUID) -> bool:
+    """Refresh the session's MFA assurance stamp (step-up verify).
+
+    ``False`` when the session was revoked concurrently (between the caller's
+    gate check and this write): the stamp was not written, so the caller
+    must not report a successful step-up. Same conditional-UPDATE shape as
+    `consume_recovery_code` — never SELECT-then-UPDATE.
+    """
+    return (
+        db.execute(
+            sa.update(UserSession)
+            .where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
+            .values(mfa_verified_at=sa.func.now())
+            .returning(UserSession.id)
+        ).scalar_one_or_none()
+        is not None
     )

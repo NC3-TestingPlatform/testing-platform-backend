@@ -127,6 +127,10 @@ class InvalidMfaCodeError(Exception):
     """Wrong, replayed, or already-spent code — one indistinguishable answer."""
 
 
+class SessionRevokedError(Exception):
+    """The session was revoked concurrently, mid-request, by another caller."""
+
+
 class MfaLockedError(Exception):
     """MFA verification is locked out after repeated failures."""
 
@@ -603,6 +607,8 @@ def enroll_mfa(
     if user is None:  # pragma: no cover - the session just proved it exists
         raise WrongCurrentPasswordError
     logger.info("mfa enrollment started for user %s", user_id)
+    # Durable before the 201: the client's very next call is the confirm.
+    db.commit()
     return MfaEnrollment(
         secret_base32=totp.secret_base32(secret),
         otpauth_uri=totp.provisioning_uri(
@@ -624,6 +630,8 @@ def confirm_mfa(
     :raises MfaAlreadyEnrolledError: When the factor is already confirmed.
     :raises MfaLockedError: While the MFA lockout stands.
     :raises InvalidMfaCodeError: When the code does not verify.
+    :raises SessionRevokedError: When the calling session was revoked
+        concurrently, mid-request.
     """
     row = repository.mfa_for(db, user_id)
     if row is None or row.totp_secret_ciphertext is None:
@@ -648,7 +656,11 @@ def confirm_mfa(
     row.failed_count = 0
     row.lockout_count = 0
     row.locked_until = None
-    repository.stamp_session_assurance(db, session_id)
+    if not repository.stamp_session_assurance(db, session_id):
+        # Revoked concurrently between the router's gate check and this
+        # write (e.g. a parallel logout): the factor is confirmed, but the
+        # calling session no longer exists to be assured.
+        raise SessionRevokedError
     repository.revoke_other_sessions(db, user_id, keep_session_id=session_id)
     codes = totp.generate_recovery_codes()
     repository.burn_recovery_codes(db, user_id)
@@ -679,6 +691,8 @@ def verify_mfa(
     :raises MfaNotEnrolledError: When no confirmed factor exists.
     :raises MfaLockedError: While the MFA lockout stands.
     :raises InvalidMfaCodeError: When the code does not verify.
+    :raises SessionRevokedError: When the calling session was revoked
+        concurrently, mid-request (step-up path only).
     """
     row = _confirmed_mfa(db, user_id)
     observed_at = _db_now(db)
@@ -692,7 +706,10 @@ def verify_mfa(
         recovery_code=recovery_code,
     )
     if not pending:
-        repository.stamp_session_assurance(db, session_id)
+        if not repository.stamp_session_assurance(db, session_id):
+            # Same concurrent-revoke race as confirm_mfa: fail closed rather
+            # than report a step-up that was never actually granted.
+            raise SessionRevokedError
         logger.info("mfa step-up refreshed for user %s", user_id)
         db.commit()
         return None

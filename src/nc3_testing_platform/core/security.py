@@ -38,9 +38,11 @@ from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.api_db import AuthDbSession
 from nc3_testing_platform.core.errors import (
     PROBLEM_MEDIA_TYPE,
+    PROBLEM_MFA_ENROLLMENT_REQUIRED,
+    PROBLEM_MFA_REQUIRED,
+    PROBLEM_MFA_STEPUP_REQUIRED,
     ProblemDetail,
     ProblemException,
-    problem_type_uri,
 )
 from nc3_testing_platform.core.settings import settings
 
@@ -199,7 +201,7 @@ def _resolve_session(
                 "The session awaits its second factor: "
                 "complete login via POST /auth/mfa/verify."
             ),
-            problem_type=problem_type_uri("mfa-required"),
+            problem_type=PROBLEM_MFA_REQUIRED,
         )
     db.execute(_SESSION_TOUCH, {"session_id": row.session_id})
     return AuthenticatedSession(
@@ -270,7 +272,7 @@ def require_current_mfa_assurance(current: CurrentSession) -> AuthenticatedSessi
                 "This operation requires MFA: "
                 "enroll via POST /auth/mfa/enroll first."
             ),
-            problem_type=problem_type_uri("mfa-enrollment-required"),
+            problem_type=PROBLEM_MFA_ENROLLMENT_REQUIRED,
         )
     max_age = timedelta(seconds=settings.auth_mfa_assurance_max_age_seconds)
     if (
@@ -284,7 +286,7 @@ def require_current_mfa_assurance(current: CurrentSession) -> AuthenticatedSessi
                 "MFA assurance has aged out: "
                 "step up via POST /auth/mfa/verify."
             ),
-            problem_type=problem_type_uri("mfa-stepup-required"),
+            problem_type=PROBLEM_MFA_STEPUP_REQUIRED,
         )
     return current
 

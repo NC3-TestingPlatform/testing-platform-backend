@@ -272,14 +272,33 @@ def _mfa_locked(exc: service.MfaLockedError) -> HTTPException:
     )
 
 
-_WRONG_PASSWORD = HTTPException(
-    status_code=status.HTTP_403_FORBIDDEN,
-    detail="The current password did not verify.",
-)
-_INVALID_CODE = HTTPException(
-    status_code=status.HTTP_403_FORBIDDEN,
-    detail="The code did not verify.",
-)
+def _wrong_password() -> HTTPException:
+    # A fresh instance per raise: a module-global shared across requests
+    # would accumulate `__traceback__` frames — including this handler's
+    # locals, which hold the submitted plaintext password — on one object
+    # reachable for the life of the process.
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The current password did not verify.",
+    )
+
+
+def _invalid_code() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The code did not verify.",
+    )
+
+
+def _session_revoked() -> HTTPException:
+    # Same shape and clear-cookie treatment as core/security.py's
+    # `_session_refused`: the session died mid-request, so the client's
+    # cached cookie is as dead as the row it named.
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated: the session is missing, expired, or revoked.",
+        headers={"Set-Cookie": SESSION_COOKIE_CLEAR},
+    )
 
 
 @router.post(
@@ -308,7 +327,7 @@ def enroll_mfa(
             db, user_id=current.user_id, password=body.password
         )
     except service.WrongCurrentPasswordError:
-        raise _WRONG_PASSWORD from None
+        raise _wrong_password() from None
     except service.MfaAlreadyEnrolledError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -329,6 +348,9 @@ def enroll_mfa(
         **problem_responses(401, 403, 409, 422, 500),
         **rate_limited(),
     },
+    # Shares the auth:mfa:{ip} bucket with verify: a combined per-IP guess
+    # budget across every code-consuming MFA endpoint.
+    dependencies=[MfaVerifyRateLimited],
 )
 def confirm_mfa(
     body: MfaConfirmSubmission,
@@ -361,7 +383,9 @@ def confirm_mfa(
     except service.MfaLockedError as exc:
         raise _mfa_locked(exc) from None
     except service.InvalidMfaCodeError:
-        raise _INVALID_CODE from None
+        raise _invalid_code() from None
+    except service.SessionRevokedError:
+        raise _session_revoked() from None
     response.headers["Cache-Control"] = "no-store"
     return RecoveryCodes(recovery_codes=codes)
 
@@ -403,7 +427,9 @@ def verify_mfa(
     except service.MfaLockedError as exc:
         raise _mfa_locked(exc) from None
     except service.InvalidMfaCodeError:
-        raise _INVALID_CODE from None
+        raise _invalid_code() from None
+    except service.SessionRevokedError:
+        raise _session_revoked() from None
     # Same post-commit context re-assertion as the login handler.
     rls.set_user_context(db, current.user_id)
     if result is not None:
@@ -439,7 +465,7 @@ def regenerate_recovery_codes(
             db, user_id=current.user_id, password=body.password
         )
     except service.WrongCurrentPasswordError:
-        raise _WRONG_PASSWORD from None
+        raise _wrong_password() from None
     except service.MfaNotEnrolledError:  # pragma: no cover - gate proved it
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -454,6 +480,9 @@ def regenerate_recovery_codes(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Disable MFA",
     responses={**problem_responses(401, 403, 409, 422, 500), **rate_limited()},
+    # Shares the auth:mfa:{ip} bucket with verify: a combined per-IP guess
+    # budget across every code-consuming MFA endpoint.
+    dependencies=[MfaVerifyRateLimited],
 )
 def disable_mfa(
     body: MfaDisableSubmission,
@@ -477,7 +506,7 @@ def disable_mfa(
             recovery_code=body.recovery_code,
         )
     except service.WrongCurrentPasswordError:
-        raise _WRONG_PASSWORD from None
+        raise _wrong_password() from None
     except service.MfaNotEnrolledError:  # pragma: no cover - gate proved it
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -486,5 +515,5 @@ def disable_mfa(
     except service.MfaLockedError as exc:
         raise _mfa_locked(exc) from None
     except service.InvalidMfaCodeError:
-        raise _INVALID_CODE from None
+        raise _invalid_code() from None
     _set_session_cookie(response, result.token)

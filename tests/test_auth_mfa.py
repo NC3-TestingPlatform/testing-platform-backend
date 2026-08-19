@@ -104,8 +104,7 @@ def _mfa_row(
 def _code(secret: bytes, offset: int = 0) -> tuple[str, int]:
     """The valid TOTP code at NOW shifted by ``offset`` steps."""
     step = totp.step_at(NOW.timestamp()) + offset
-    code = totp._totp(secret).generate(step * totp.TOTP_STEP_SECONDS)
-    return code.decode("ascii"), step
+    return totp.code_at(secret, step), step
 
 
 def _db() -> MagicMock:
@@ -138,6 +137,7 @@ def test_totp_window_accepts_one_step_of_skew() -> None:
     assert totp.matching_step(secret, code, at_step=step + 1) == step
     assert totp.matching_step(secret, code, at_step=step - 1) == step
     assert totp.matching_step(secret, code, at_step=step + 2) is None
+    assert totp.matching_step(secret, code, at_step=step - 2) is None
 
 
 def test_recovery_codes_format_and_normalization() -> None:
@@ -234,17 +234,17 @@ def test_confirm_activates_stamps_and_mints_codes(
     row, secret = _mfa_row(kek, confirmed=False)
     monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
     stamped: list[uuid.UUID] = []
-    revoked: list[uuid.UUID] = []
+    kept: list[uuid.UUID] = []
     inserted: list[bytes] = []
     monkeypatch.setattr(
         service.repository,
         "stamp_session_assurance",
-        lambda db, sid: stamped.append(sid),
+        lambda db, sid: stamped.append(sid) or True,
     )
     monkeypatch.setattr(
         service.repository,
         "revoke_other_sessions",
-        lambda db, uid, *, keep_session_id: revoked.append(keep_session_id),
+        lambda db, uid, *, keep_session_id: kept.append(keep_session_id),
     )
     monkeypatch.setattr(
         service.repository, "burn_recovery_codes", lambda db, uid: None
@@ -262,8 +262,25 @@ def test_confirm_activates_stamps_and_mints_codes(
     assert row.confirmed_at == NOW
     assert row.last_used_step == step
     assert stamped == [SESSION_ID]
-    assert revoked == [SESSION_ID]
+    assert kept == [SESSION_ID]
     assert inserted == [totp.hash_recovery_code(c) for c in codes]
+
+
+def test_confirm_refuses_when_the_session_was_revoked_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A miss on the guarded stamp UPDATE fails closed, not silently."""
+    kek = _wire_kek(monkeypatch)
+    row, secret = _mfa_row(kek, confirmed=False)
+    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
+    monkeypatch.setattr(
+        service.repository, "stamp_session_assurance", lambda db, sid: False
+    )
+    code, _ = _code(secret)
+    with pytest.raises(service.SessionRevokedError):
+        service.confirm_mfa(
+            _db(), user_id=USER_ID, session_id=SESSION_ID, code=code
+        )
 
 
 # --- verification -------------------------------------------------------------
@@ -287,7 +304,7 @@ def test_verify_accepts_one_step_of_skew_and_refreshes(
     monkeypatch.setattr(
         service.repository,
         "stamp_session_assurance",
-        lambda db, sid: stamped.append(sid),
+        lambda db, sid: stamped.append(sid) or True,
     )
     code, step = _code(secret, offset=-1)
     result = service.verify_mfa(
@@ -300,6 +317,25 @@ def test_verify_accepts_one_step_of_skew_and_refreshes(
     assert result is None
     assert stamped == [SESSION_ID]
     assert row.last_used_step == step
+
+
+def test_verify_stepup_refuses_when_the_session_was_revoked_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A miss on the guarded stamp UPDATE fails closed, not silently."""
+    row, secret = _wire_confirmed(monkeypatch)
+    monkeypatch.setattr(
+        service.repository, "stamp_session_assurance", lambda db, sid: False
+    )
+    code, _ = _code(secret)
+    with pytest.raises(service.SessionRevokedError):
+        service.verify_mfa(
+            _db(),
+            user_id=USER_ID,
+            session_id=SESSION_ID,
+            pending=False,
+            totp_code=code,
+        )
 
 
 def test_verify_refuses_a_replayed_step(
@@ -411,7 +447,7 @@ def test_verify_recovery_code_spends_exactly_once(
     """The repository's conditional UPDATE outcome decides; a miss counts."""
     row, _ = _wire_confirmed(monkeypatch)
     monkeypatch.setattr(
-        service.repository, "stamp_session_assurance", lambda db, sid: None
+        service.repository, "stamp_session_assurance", lambda db, sid: True
     )
     monkeypatch.setattr(
         service.repository, "unused_recovery_code_count", lambda db, uid: 9
@@ -739,6 +775,23 @@ def test_verify_endpoint_maps_lockout_to_429(
     )
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "42"
+
+
+def test_verify_endpoint_maps_concurrent_revoke_to_401_and_clears_cookie(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step-up race with a revoke answers 401, same as any dead session."""
+    _authenticate(pending=False)
+
+    def _raise(db: Any, **kwargs: Any) -> Any:
+        raise service.SessionRevokedError
+
+    monkeypatch.setattr(service, "verify_mfa", _raise)
+    response = client.post(
+        "/api/v1/auth/mfa/verify", json={"totp_code": "123456"}
+    )
+    assert response.status_code == 401
+    assert "Max-Age=0" in response.headers["Set-Cookie"]
 
 
 def test_enroll_endpoint_answers_no_store_and_409(

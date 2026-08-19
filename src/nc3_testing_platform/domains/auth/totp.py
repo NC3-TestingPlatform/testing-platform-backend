@@ -48,6 +48,16 @@ def step_at(seconds: float) -> int:
     return int(seconds) // TOTP_STEP_SECONDS
 
 
+def code_at(secret: bytes, step: int) -> str:
+    """The 6-digit code for ``step`` — the public counterpart to `matching_step`.
+
+    Test-only entry point: production code only ever verifies a
+    caller-supplied code, never generates one. Exists so tests stop reaching
+    into `_totp` and re-deriving the step-duration math themselves.
+    """
+    return _totp(secret).generate(step * TOTP_STEP_SECONDS).decode("ascii")
+
+
 def matching_step(secret: bytes, code: str, *, at_step: int) -> int | None:
     """The step within ±1 of ``at_step`` that ``code`` matches, or ``None``.
 
