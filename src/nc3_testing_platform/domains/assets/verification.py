@@ -35,6 +35,11 @@ class VerificationFailureCode(StrEnum):
     calls it a "stable namespaced reason" — so the vocabulary belongs here, in
     the pure layer that is already exhaustively tested.
 
+    Members are either **stamped** on the challenge and returned with `200`
+    (`dns.*`, `challenge.superseded`, `policy.*`), or they travel as a `503` and
+    are never written (`platform.*`) — a platform fault must not leave a reason on
+    the user's record suggesting their DNS is at fault.
+
     The namespace prefix carries the one distinction a client needs to act on:
     `dns.` and `challenge.` and `policy.` are outcomes of a check that ran and
     that the user can do something about, so they arrive with `200`. `platform.`
@@ -46,7 +51,6 @@ class VerificationFailureCode(StrEnum):
     RECORD_NOT_FOUND = "dns.record-not-found"
     NAME_NOT_FOUND = "dns.name-not-found"
     TOKEN_MISMATCH = "dns.token-mismatch"
-    RESOLVER_TIMEOUT = "dns.resolver-timeout"
     RESOLVER_FAILURE = "dns.resolver-failure"
     CORROBORATION_NOT_REACHED = "dns.corroboration-not-reached"
     CHALLENGE_EXPIRED = "challenge.expired"
@@ -199,11 +203,16 @@ class CheckVerdict:
 # Which failure a caller is told about when no resolver produced an answer. The
 # order is deliberate: a definite answer about the name beats a transport problem,
 # because it is the one the user can act on.
+# Outcomes in which no resolver said anything about the name. All of them mean the
+# platform could not perform the check.
+_PLATFORM_OUTCOMES = frozenset(
+    {DnsOutcome.TIMEOUT, DnsOutcome.TRANSPORT_FAILURE, DnsOutcome.NOT_ATTEMPTED}
+)
+
 _NO_ANSWER_CODES: tuple[tuple[DnsOutcome, VerificationFailureCode], ...] = (
     (DnsOutcome.NO_RECORD, VerificationFailureCode.RECORD_NOT_FOUND),
     (DnsOutcome.NAME_NOT_FOUND, VerificationFailureCode.NAME_NOT_FOUND),
     (DnsOutcome.SERVER_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
-    (DnsOutcome.TIMEOUT, VerificationFailureCode.RESOLVER_TIMEOUT),
     (DnsOutcome.TRANSPORT_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
 )
 
@@ -219,9 +228,11 @@ def evaluate(
 
     Two independent bars, either of which is enough for `exact` coverage:
 
-    * **one DNSSEC-validated answer** carrying the token, which is strictly
+    * **every answer carrying the token was DNSSEC-validated**, which is strictly
       stronger than corroboration because the signature is checked rather than
-      compared; or
+      compared. "Every" rather than "any": if resolvers disagree about validation
+      for one name, one of them is not validating, and treating that as a checked
+      signature would be wrong; or
     * **`quorum` resolvers** independently carrying it, which is what defends the
       unsigned zones that are most of `.lu`.
 
@@ -239,6 +250,16 @@ def evaluate(
     answered = [o for o in outcomes if o.outcome is DnsOutcome.ANSWERED]
     if not answered:
         seen = {o.outcome for o in outcomes}
+        if seen and seen <= _PLATFORM_OUTCOMES:
+            # Nothing answered and nothing even made a DNS-level statement about
+            # the name: the fault is ours, so the caller must refuse rather than
+            # report a result. `SERVER_FAILURE` deliberately stays out of this set
+            # — a validating resolver's SERVFAIL is indistinguishable from a bogus
+            # signature, which *is* a statement about the name.
+            return CheckVerdict(
+                verified=False,
+                failure_code=VerificationFailureCode.RESOLVER_UNAVAILABLE,
+            )
         code = next(
             (code for outcome, code in _NO_ANSWER_CODES if outcome in seen),
             VerificationFailureCode.RESOLVER_FAILURE,
@@ -272,13 +293,19 @@ def evaluate(
         corroborating_answers=len(carrying),
     )
 
-    if requested_scope is VerificationScope.ZONE and not validated:
-        return CheckVerdict(
-            verified=False,
-            failure_code=VerificationFailureCode.ZONE_REQUIRES_DNSSEC,
-            resolvers=resolvers,
-            corroborating_answers=len(carrying),
-        )
+    if requested_scope is VerificationScope.ZONE:
+        if not validated:
+            return CheckVerdict(
+                verified=False,
+                failure_code=VerificationFailureCode.ZONE_REQUIRES_DNSSEC,
+                resolvers=resolvers,
+                corroborating_answers=len(carrying),
+            )
+    elif requested_scope is not VerificationScope.EXACT:
+        # Exhaustive on purpose, for the same reason `covers` refuses loudly: a
+        # scope added later would otherwise fall through to the *more* permissive
+        # arm and grant coverage nobody decided to grant.
+        raise ValueError(f"unhandled verification scope: {requested_scope!r}")
     if validated or len(carrying) >= quorum:
         return verdict
     return CheckVerdict(

@@ -151,6 +151,13 @@ def _query_one(
     client.nameservers = [_nameserver(resolver)]
     client.use_edns(0, dns.flags.DO, _EDNS_PAYLOAD)
     client.search = []
+    # Both budgets, deliberately. `lifetime` alone leaves dnspython's per-attempt
+    # `timeout` at its 2.0s default, so a silently dropping resolver is retried
+    # until the lifetime is spent — three DoT connections and three TLS handshakes
+    # per resolver per check. That triples the outbound load the global cap exists
+    # to bound, and triples what the platform inflicts on somebody else's
+    # infrastructure.
+    client.timeout = timeout
     client.lifetime = timeout
     try:
         answer = client.resolve(name, dns.rdatatype.TXT)
@@ -175,11 +182,18 @@ def _query_one(
         return ResolverOutcome(resolver_id, DnsOutcome.TIMEOUT)
     except dns.exception.DNSException:
         return ResolverOutcome(resolver_id, DnsOutcome.TRANSPORT_FAILURE)
-    except Exception:
+    except Exception as exc:
         # TLS and certificate failures surface as ssl/OSError rather than a
         # DNSException. They are a failed check like any other: there is no
         # plaintext retry, deliberately.
-        logger.warning("resolver %s failed on transport", resolver_id, exc_info=True)
+        # The class only: an exception string is the one place in this module
+        # where a queried name could reach shared logs, and domains are personal
+        # data that must not leak into telemetry.
+        logger.warning(
+            "resolver %s failed on transport (%s)",
+            resolver_id,
+            exc.__class__.__name__,
+        )
         return ResolverOutcome(resolver_id, DnsOutcome.TRANSPORT_FAILURE)
     return ResolverOutcome(
         resolver_id,

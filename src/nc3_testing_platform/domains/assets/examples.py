@@ -14,13 +14,11 @@ from nc3_testing_platform.core.enums import (
     AssetType,
     FeedFormat,
     VerificationScope,
-    VerificationStatus,
 )
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
     AssetFeed,
     AssetFeedCreated,
-    DomainVerification,
     VerificationChallenge,
 )
 from nc3_testing_platform.domains.scans.examples import (
@@ -90,30 +88,6 @@ def sample_challenge(checked: bool = False) -> VerificationChallenge:
     )
 
 
-def sample_verification(
-    status: VerificationStatus = VerificationStatus.VERIFIED,
-    checked: bool = False,
-) -> DomainVerification:
-    """A zone-scoped verification in the given state."""
-    verified = status == VerificationStatus.VERIFIED
-    return DomainVerification(
-        asset_id=ASSET_ID,
-        status=status,
-        verified_scope=VerificationScope.ZONE if verified else None,
-        verified_at=_T0 if verified else None,
-        challenge=None if verified else sample_challenge(checked=checked),
-    )
-
-
-def sample_reverification() -> DomainVerification:
-    """An exact-scoped proof holding while a challenge for zone coverage runs."""
-    return DomainVerification(
-        asset_id=ASSET_ID,
-        status=VerificationStatus.VERIFIED,
-        verified_scope=VerificationScope.EXACT,
-        verified_at=_T0,
-        challenge=sample_challenge(),
-    )
 
 
 def sample_feed() -> AssetFeed:

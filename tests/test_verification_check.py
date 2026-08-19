@@ -114,12 +114,14 @@ def test_a_partial_propagation_lowers_the_count_rather_than_failing_distinctly()
 @pytest.mark.parametrize(
     ("outcome", "expected"),
     [
+        # A statement about the name — the user can act on these.
         (DnsOutcome.NO_RECORD, VerificationFailureCode.RECORD_NOT_FOUND),
         (DnsOutcome.NAME_NOT_FOUND, VerificationFailureCode.NAME_NOT_FOUND),
-        (DnsOutcome.TIMEOUT, VerificationFailureCode.RESOLVER_TIMEOUT),
         (DnsOutcome.SERVER_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
-        (DnsOutcome.TRANSPORT_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
-        (DnsOutcome.NOT_ATTEMPTED, VerificationFailureCode.RESOLVER_FAILURE),
+        # No statement at all — the platform failed, so these become 503.
+        (DnsOutcome.TIMEOUT, VerificationFailureCode.RESOLVER_UNAVAILABLE),
+        (DnsOutcome.TRANSPORT_FAILURE, VerificationFailureCode.RESOLVER_UNAVAILABLE),
+        (DnsOutcome.NOT_ATTEMPTED, VerificationFailureCode.RESOLVER_UNAVAILABLE),
     ],
 )
 def test_every_no_answer_case_names_a_reason(
@@ -134,7 +136,11 @@ def test_every_no_answer_case_names_a_reason(
 
 
 def test_a_definite_answer_about_the_name_beats_a_transport_problem() -> None:
-    """The user can act on "no record"; they cannot act on our timeout."""
+    """One resolver answering keeps this a result, not a platform fault.
+
+    Only a total absence of DNS-level statements is ours to own; a timeout beside
+    a real answer is ordinary.
+    """
     verdict = verification.evaluate(
         [ResolverOutcome("a", DnsOutcome.TIMEOUT), ResolverOutcome("b", DnsOutcome.NO_RECORD)],
         token=TOKEN,
@@ -158,6 +164,42 @@ def test_a_record_that_is_not_ours_is_distinguished_from_no_record() -> None:
         [_answered("a", token=None)], token=TOKEN, requested_scope=EXACT, quorum=1
     )
     assert empty.failure_code is VerificationFailureCode.RECORD_NOT_FOUND
+
+
+def test_no_resolver_speaking_is_a_platform_fault() -> None:
+    """Transport failures are ours; a SERVFAIL is still a statement about the name."""
+    ours = verification.evaluate(
+        [
+            ResolverOutcome("a", DnsOutcome.TIMEOUT),
+            ResolverOutcome("b", DnsOutcome.TRANSPORT_FAILURE),
+        ],
+        token=TOKEN,
+        requested_scope=EXACT,
+        quorum=1,
+    )
+    assert ours.failure_code is VerificationFailureCode.RESOLVER_UNAVAILABLE
+
+    theirs = verification.evaluate(
+        [
+            ResolverOutcome("a", DnsOutcome.TIMEOUT),
+            ResolverOutcome("b", DnsOutcome.SERVER_FAILURE),
+        ],
+        token=TOKEN,
+        requested_scope=EXACT,
+        quorum=1,
+    )
+    assert theirs.failure_code is VerificationFailureCode.RESOLVER_FAILURE
+
+
+def test_an_unhandled_scope_refuses_rather_than_granting_coverage() -> None:
+    """Mirrors `covers`: a scope added later must not land on the permissive arm."""
+    with pytest.raises(ValueError, match="unhandled verification scope"):
+        verification.evaluate(
+            [_answered("a", ad=True)],
+            token=TOKEN,
+            requested_scope="whole-internet",  # type: ignore[arg-type]
+            quorum=1,
+        )
 
 
 def test_a_verified_verdict_never_carries_a_failure_code() -> None:
@@ -225,6 +267,11 @@ def wired(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(service.repository, "asset_for", lambda db, aid: asset)
     monkeypatch.setattr(service.repository, "challenge_for", lambda db, aid: challenge)
+    monkeypatch.setattr(
+        service.repository,
+        "challenge_credentials_for",
+        lambda db, aid: (challenge.verification_token, challenge.token_expires_at),
+    )
     monkeypatch.setattr(service.repository, "proof_for", lambda db, aid: state["proof"])
     monkeypatch.setattr(
         service.repository,
@@ -331,31 +378,71 @@ def test_success_clears_a_previous_failure(wired) -> None:
 
 
 def test_a_regenerated_token_is_not_proved_against_the_stale_value(wired) -> None:
-    """The challenge is re-read after the lookup, so a mid-flight replace wins."""
+    """A token replaced mid-lookup must not be proved against the old value.
+
+    This drives `challenge_credentials_for`, which is the seam `run_check` reads
+    after the lookup. An earlier version of this test monkeypatched
+    `challenge_for` and mutated an ORM-shaped stand-in, which passed against code
+    that could not possibly work: the real session keeps rows un-expired across a
+    commit, so re-reading the *entity* returned the same object and compared a
+    value against itself. `test_verification_postgres.py` pins that against a real
+    database; this pins the branch.
+    """
     wired.monkeypatch.setattr(
         service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
     )
-
-    reads = {"n": 0}
-
-    def replaced(db: object, aid: object) -> object:
-        # Only the re-read sees the new token: the first read is what the check
-        # captured and resolved against.
-        reads["n"] += 1
-        if reads["n"] > 1:
-            wired.challenge.verification_token = "a-different-token"
-        return wired.challenge
-
-    wired.monkeypatch.setattr(service.repository, "challenge_for", replaced)
+    wired.monkeypatch.setattr(
+        service.repository,
+        "challenge_credentials_for",
+        lambda db, aid: ("a-different-token", wired.challenge.token_expires_at),
+    )
 
     def explode(*a: object, **k: object) -> None:
         raise AssertionError("a superseded token must not write a proof")
 
     wired.monkeypatch.setattr(service.repository, "upsert_proof", explode)
     _run(wired)
-    # Not RECORD_NOT_FOUND: the new token was never looked for, so saying the
-    # record is missing would be false about DNS the user may have got right.
     assert wired.state["stamped"] == [VerificationFailureCode.CHALLENGE_SUPERSEDED.value]
+
+
+def test_a_token_that_lapses_during_the_lookup_is_refused(wired) -> None:
+    """Expiry is re-checked after the network call, not only before it.
+
+    The DNS budget is seconds long; a challenge that dies inside that window must
+    not still win a terminal claim.
+    """
+    wired.monkeypatch.setattr(
+        service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
+    )
+    wired.monkeypatch.setattr(
+        service.repository,
+        "challenge_credentials_for",
+        lambda db, aid: (TOKEN, datetime.now(UTC) - timedelta(seconds=1)),
+    )
+    with pytest.raises(service.ChallengeExpiredError):
+        _run(wired)
+
+
+def test_every_resolver_failing_is_our_fault_not_the_users(wired) -> None:
+    """No resolver said anything about the name, so nothing is recorded.
+
+    This is not hypothetical: until the egress allowlist is provisioned, every
+    check from the deployed container fails exactly this way, and stamping a
+    `dns.*` reason would tell customers their DNS is broken when the fault is a
+    firewall of ours.
+    """
+    wired.monkeypatch.setattr(
+        service.dns_utils,
+        "resolve_txt",
+        lambda name: [
+            ResolverOutcome("a", DnsOutcome.TRANSPORT_FAILURE),
+            ResolverOutcome("b", DnsOutcome.TIMEOUT),
+            ResolverOutcome("c", DnsOutcome.NOT_ATTEMPTED),
+        ],
+    )
+    with pytest.raises(service.ResolverUnavailableError):
+        _run(wired)
+    assert wired.state["stamped"] == []
 
 
 def test_a_lost_claim_is_refused_and_the_reason_is_recorded(wired) -> None:

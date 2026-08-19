@@ -628,3 +628,57 @@ def test_the_composite_key_refuses_a_proof_whose_value_drifted(
         _prove(app_session, seed, seed.asset_a, "not-this-assets-value.example.invalid")
         app_session.flush()
     app_session.rollback()
+
+
+def test_a_post_commit_re_read_sees_a_concurrently_replaced_token(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """The check's post-lookup re-read must see the database, not the identity map.
+
+    `run_check` captures the token, commits, spends up to the DNS budget on the
+    network, and then re-reads to make sure the token it proved is still the one
+    that stands. That re-read only works if it actually goes to the database.
+
+    It did not. Sessions are built with `expire_on_commit=False` — load-bearing
+    elsewhere — so a commit leaves loaded rows un-expired, and re-selecting the
+    *entity* returns the same Python object with the same stale attributes. The
+    comparison was `x != x` and could never fire, which made
+    `CHALLENGE_SUPERSEDED` unreachable and quietly broke the guarantee that a
+    token regenerated mid-check is never proved against a stale value.
+
+    This asserts both halves, because the trap is the entity read and the fix is
+    the column read: the ORM path still hands back the stale instance, while
+    `challenge_credentials_for` reports the truth.
+    """
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    _issue(app_session, seed, seed.asset_a, token="token-original")
+    app_session.commit()
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+
+    loaded = repository.challenge_for(app_session, seed.asset_a)
+    assert loaded is not None
+    captured = loaded.verification_token
+    app_session.commit()  # what run_check does before resolving
+
+    # Someone regenerates the token while the lookup is in flight.
+    with owner_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE domain_verification_challenge SET verification_token = "
+                "'token-regenerated' WHERE asset_id = :asset"
+            ),
+            {"asset": seed.asset_a},
+        )
+
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    stale = repository.challenge_for(app_session, seed.asset_a)
+    assert stale is not None
+    assert stale.verification_token == captured, (
+        "the entity read is expected to return the cached instance — this is the "
+        "trap, pinned so nobody 'simplifies' the fix back into it"
+    )
+
+    fresh = repository.challenge_credentials_for(app_session, seed.asset_a)
+    assert fresh is not None
+    assert fresh[0] == "token-regenerated"
+    assert fresh[0] != captured, "the re-read must detect a superseded token"

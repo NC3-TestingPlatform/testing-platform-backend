@@ -14,7 +14,7 @@ cannot, which is the point.
 
 import uuid
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -127,6 +127,35 @@ def upsert_challenge(
         .execution_options(populate_existing=True)
     )
     return db.scalars(statement).one()
+
+
+def challenge_credentials_for(
+    db: Session, asset_id: uuid.UUID
+) -> tuple[str, datetime] | None:
+    """The challenge's token and expiry as **plain values**, not an ORM instance.
+
+    Deliberately a column select. The sessions this runs on are built with
+    `expire_on_commit=False` (`core/api_db`), which is load-bearing elsewhere but
+    means a commit does **not** expire a loaded row: a later `select()` finds the
+    identity key present and un-expired, discards what the database returned, and
+    hands back the same Python object. Re-reading an entity would therefore be a
+    no-op that silently compares a value against itself.
+
+    That is the same identity-map behaviour `upsert_proof` and `upsert_challenge`
+    defuse with `populate_existing=True`; here the caller wants values rather than
+    a managed instance, so a column select is both simpler and impossible to get
+    wrong by omission.
+
+    :returns: ``(verification_token, token_expires_at)``, or ``None`` when no
+        challenge stands.
+    """
+    row = db.execute(
+        sa.select(
+            DomainVerificationChallenge.verification_token,
+            DomainVerificationChallenge.token_expires_at,
+        ).where(DomainVerificationChallenge.asset_id == asset_id)
+    ).one_or_none()
+    return (row.verification_token, row.token_expires_at) if row else None
 
 
 def upsert_proof(
