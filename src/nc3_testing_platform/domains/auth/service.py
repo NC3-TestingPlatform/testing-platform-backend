@@ -479,12 +479,24 @@ def _db_now(db: Session) -> datetime:
     return db.execute(sa.select(sa.func.now())).scalar_one()
 
 
-def _confirmed_mfa(db: Session, user_id: uuid.UUID) -> UserMfa:
+def _confirmed_mfa(
+    db: Session, user_id: uuid.UUID, *, for_update: bool = False
+) -> UserMfa:
     """The user's confirmed factor row.
+
+    ``for_update`` row-locks it for the transaction: every caller that goes
+    on to check-and-consume a code (verify, disable) must serialize against
+    a concurrent attempt on the same row (`repository.mfa_for_update`).
+    Callers that only check enrollment (recovery-code regeneration) skip
+    the lock — they never touch `last_used_step` or the failure counters.
 
     :raises MfaNotEnrolledError: When no confirmed enrollment exists.
     """
-    row = repository.mfa_for(db, user_id)
+    row = (
+        repository.mfa_for_update(db, user_id)
+        if for_update
+        else repository.mfa_for(db, user_id)
+    )
     if row is None or row.confirmed_at is None or row.totp_secret_ciphertext is None:
         raise MfaNotEnrolledError
     return row
@@ -633,7 +645,9 @@ def confirm_mfa(
     :raises SessionRevokedError: When the calling session was revoked
         concurrently, mid-request.
     """
-    row = repository.mfa_for(db, user_id)
+    # Locked: this is a code-guessing surface (a wrong code counts toward
+    # the lockout, same as verify/disable) — see `mfa_for_update`.
+    row = repository.mfa_for_update(db, user_id)
     if row is None or row.totp_secret_ciphertext is None:
         raise MfaNotEnrolledError
     if row.confirmed_at is not None:
@@ -694,7 +708,7 @@ def verify_mfa(
     :raises SessionRevokedError: When the calling session was revoked
         concurrently, mid-request (step-up path only).
     """
-    row = _confirmed_mfa(db, user_id)
+    row = _confirmed_mfa(db, user_id, for_update=True)
     observed_at = _db_now(db)
     _require_mfa_unlocked(row, observed_at)
     _spend_code(
@@ -742,7 +756,7 @@ def disable_mfa(
     :raises MfaLockedError: While the MFA lockout stands.
     :raises InvalidMfaCodeError: When the code does not verify.
     """
-    row = _confirmed_mfa(db, user_id)
+    row = _confirmed_mfa(db, user_id, for_update=True)
     observed_at = _db_now(db)
     _require_mfa_unlocked(row, observed_at)
     _verify_current_password(db, user_id, password)

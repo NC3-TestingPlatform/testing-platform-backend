@@ -109,6 +109,22 @@ def mfa_for(db: Session, user_id: uuid.UUID) -> UserMfa | None:
     ).one_or_none()
 
 
+def mfa_for_update(db: Session, user_id: uuid.UUID) -> UserMfa | None:
+    """`mfa_for`, row-locked for the transaction.
+
+    Every code-guessing path (confirm, verify, disable) reads-checks-writes
+    `last_used_step` and the failure counters on this row; without a lock,
+    two concurrent requests can both read the pre-write state and both pass
+    — accepting the same TOTP step twice, or both escaping the lockout
+    threshold. The lock serializes them: the second blocks until the
+    first's `_record_mfa_failure`/caller commit releases it, then reads the
+    now-current counters.
+    """
+    return db.scalars(
+        sa.select(UserMfa).where(UserMfa.user_id == user_id).with_for_update()
+    ).one_or_none()
+
+
 def unused_recovery_code_count(db: Session, user_id: uuid.UUID) -> int:
     """How many live (unused, unsuperseded) recovery codes remain."""
     return db.scalar(

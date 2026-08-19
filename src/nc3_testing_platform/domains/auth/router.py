@@ -393,7 +393,11 @@ def confirm_mfa(
 @router.post(
     "/mfa/verify",
     summary="Complete login or refresh MFA assurance",
-    responses={**problem_responses(401, 403, 409, 422, 500), **rate_limited()},
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 409, 422, 500),
+        **rate_limited(),
+    },
     dependencies=[MfaVerifyRateLimited],
 )
 def verify_mfa(
@@ -430,6 +434,7 @@ def verify_mfa(
         raise _invalid_code() from None
     except service.SessionRevokedError:
         raise _session_revoked() from None
+    response.headers["Cache-Control"] = "no-store"
     # Same post-commit context re-assertion as the login handler.
     rls.set_user_context(db, current.user_id)
     if result is not None:
@@ -479,7 +484,11 @@ def regenerate_recovery_codes(
     "/mfa/disable",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Disable MFA",
-    responses={**problem_responses(401, 403, 409, 422, 500), **rate_limited()},
+    responses={
+        204: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 409, 422, 500),
+        **rate_limited(),
+    },
     # Shares the auth:mfa:{ip} bucket with verify: a combined per-IP guess
     # budget across every code-consuming MFA endpoint.
     dependencies=[MfaVerifyRateLimited],
@@ -516,4 +525,5 @@ def disable_mfa(
         raise _mfa_locked(exc) from None
     except service.InvalidMfaCodeError:
         raise _invalid_code() from None
+    response.headers["Cache-Control"] = "no-store"
     _set_session_cookie(response, result.token)

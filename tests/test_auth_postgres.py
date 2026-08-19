@@ -14,6 +14,7 @@ passwords unless `APP_DATABASE_URL` / `AUTH_DATABASE_URL` say otherwise.
 """
 
 import os
+import threading
 import time
 import uuid
 from base64 import b32decode
@@ -29,7 +30,7 @@ from uuid6 import uuid7
 
 from nc3_testing_platform.core import api_db, rls
 from nc3_testing_platform.core.settings import settings
-from nc3_testing_platform.domains.auth import totp
+from nc3_testing_platform.domains.auth import repository, totp
 from nc3_testing_platform.main import app
 
 pytestmark = pytest.mark.postgres
@@ -502,6 +503,46 @@ def test_cross_user_isolation_on_mfa_rows(client: TestClient) -> None:
         assert foreign == 0
     finally:
         session.close()
+        engine.dispose()
+
+
+def test_mfa_row_lock_serializes_concurrent_guessers(client: TestClient) -> None:
+    """`mfa_for_update` blocks a second locker until the first releases it.
+
+    Without the lock, two concurrent verify/confirm/disable requests could
+    both read `last_used_step`/`failed_count` before either writes, and
+    both pass the same check — replaying a TOTP step or escaping the
+    lockout threshold. This proves the row lock actually serializes them,
+    at the database level, independent of the request-handling code above.
+    """
+    _, user_id = _register_and_login(client)
+    _enroll_and_confirm(client)
+
+    engine = sa.create_engine(_role_url("nc3_auth", "AUTH_DATABASE_URL"))
+    factory = sessionmaker(bind=engine)
+    session_a = factory()
+    session_b = factory()
+    try:
+        rls.set_user_context(session_a, user_id)
+        rls.set_user_context(session_b, user_id)
+        assert repository.mfa_for_update(session_a, user_id) is not None
+
+        acquired = threading.Event()
+
+        def _second_locker() -> None:
+            repository.mfa_for_update(session_b, user_id)
+            acquired.set()
+
+        thread = threading.Thread(target=_second_locker)
+        thread.start()
+        # Still blocked a moment later: session_a holds the row lock.
+        assert not acquired.wait(timeout=0.3)
+        session_a.commit()  # releases the lock
+        assert acquired.wait(timeout=2), "second locker never acquired the row"
+        thread.join(timeout=2)
+    finally:
+        session_a.close()
+        session_b.close()
         engine.dispose()
 
 

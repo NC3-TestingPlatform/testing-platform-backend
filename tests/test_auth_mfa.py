@@ -215,7 +215,7 @@ def test_confirm_wrong_code_counts_and_commits(
     """The failure counter persists even though the request fails."""
     kek = _wire_kek(monkeypatch)
     row, _ = _mfa_row(kek, confirmed=False)
-    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
+    monkeypatch.setattr(service.repository, "mfa_for_update", lambda db, uid: row)
     wrong_code, _ = _code(totp.generate_secret())
     db = _db()
     with pytest.raises(service.InvalidMfaCodeError):
@@ -232,7 +232,7 @@ def test_confirm_activates_stamps_and_mints_codes(
     """Success assures the calling session, revokes the rest, mints the set."""
     kek = _wire_kek(monkeypatch)
     row, secret = _mfa_row(kek, confirmed=False)
-    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
+    monkeypatch.setattr(service.repository, "mfa_for_update", lambda db, uid: row)
     stamped: list[uuid.UUID] = []
     kept: list[uuid.UUID] = []
     inserted: list[bytes] = []
@@ -272,7 +272,7 @@ def test_confirm_refuses_when_the_session_was_revoked_concurrently(
     """A miss on the guarded stamp UPDATE fails closed, not silently."""
     kek = _wire_kek(monkeypatch)
     row, secret = _mfa_row(kek, confirmed=False)
-    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
+    monkeypatch.setattr(service.repository, "mfa_for_update", lambda db, uid: row)
     monkeypatch.setattr(
         service.repository, "stamp_session_assurance", lambda db, sid: False
     )
@@ -291,7 +291,7 @@ def _wire_confirmed(
 ) -> tuple[SimpleNamespace, bytes]:
     kek = _wire_kek(monkeypatch)
     row, secret = _mfa_row(kek, confirmed=True, **overrides)
-    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: row)
+    monkeypatch.setattr(service.repository, "mfa_for_update", lambda db, uid: row)
     return row, secret
 
 
@@ -482,7 +482,7 @@ def test_verify_recovery_code_spends_exactly_once(
 
 def test_verify_unenrolled_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     """No confirmed factor, nothing to verify against."""
-    monkeypatch.setattr(service.repository, "mfa_for", lambda db, uid: None)
+    monkeypatch.setattr(service.repository, "mfa_for_update", lambda db, uid: None)
     with pytest.raises(service.MfaNotEnrolledError):
         service.verify_mfa(
             _db(),
@@ -755,6 +755,7 @@ def test_verify_endpoint_rotates_the_cookie_when_pending(
     )
     assert response.status_code == 200
     assert "assured-token" in response.headers["set-cookie"]
+    assert response.headers["Cache-Control"] == "no-store"
     body = response.json()
     assert body["mfa_required"] is False
     assert body["organization_role"] == "organization_admin"
@@ -840,6 +841,7 @@ def test_disable_endpoint_rotates_the_cookie(
     )
     assert response.status_code == 204
     assert "rotated-token" in response.headers["set-cookie"]
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_recovery_codes_endpoint_requires_fresh_assurance(
