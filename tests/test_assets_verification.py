@@ -7,8 +7,8 @@ every timestamp comes from the database clock.
 None of that proves behaviour. Whether the conflict target matches the live
 unique constraint, whether the upsert holds under real concurrency, and whether
 the policy actually hides another organization's rows are all questions only a
-real database answers — `tests/test_verification_postgres.py`, still to be
-written (task #271), owns them. Until it exists this file's guarantees stop at
+real database answers — `tests/test_verification_postgres.py` owns them, and it
+found a stale-token bug none of this could see. This file's guarantees stop at
 "the statement is shaped as intended".
 """
 
