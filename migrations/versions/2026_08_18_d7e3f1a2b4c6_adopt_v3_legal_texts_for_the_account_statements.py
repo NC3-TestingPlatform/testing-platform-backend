@@ -11,15 +11,17 @@ provisionally (decision 2026-08-18):
 
 * `terms_and_conditions` → version `2026-08-18`: the platform's adapted
   Terms of Service, committed at `docs/legal/terms-of-service-2026-08-18.md`
-  (adapted from the v3 page with three corrections found in the PR #39
+  (adapted from the v3 page with four corrections found in the PR #39
   review — mistyped privacy link, malformed survival clause, undefined
-  "Data Shared"; the file header lists them). The placeholder row is
+  "Data Shared", account-creation data list aligned with what
+  registration collects; the file header lists them). The placeholder row is
   corrected in place rather than versioned: its 2026-01-15 "version" named
   no real text, and no production registration exists to have attested to it.
 * `privacy_policy` → new acceptance statement (the NFR requires explicit
   privacy consent at signup), version `2026-08-18`: the platform's adapted
   Privacy Statement at `docs/legal/privacy-statement-2026-08-18.md`
-  (truncated sentence completed; the approved retention figures added).
+  (truncated sentence completed; the approved retention figures added
+  and reconciled with the anonymizing deletion workflow).
   Registration requires every active account-level acceptance, so the new
   row binds automatically.
 * `content_hash` is the SHA-256 of the committed file; `content_uri` points
@@ -52,10 +54,10 @@ _TERMS_ID = "019ee1a2-0011-7c22-8d33-4e55f6a77b88"
 _PRIVACY_ID = "019ee1a2-3344-7f55-b066-7b88c9aadbcc"
 
 _TERMS_HASH = (
-    "sha256:3cbaf4702d67aab5b7d57e9f77cd9e3087df9a4a69714fd23ce041abcb075b74"
+    "sha256:5849ebd2b3c3eb22985f1507483fa21e9a364ddd72e72a7a6f00034438fb1515"
 )
 _PRIVACY_HASH = (
-    "sha256:0560cefecd67a08c81784b68f7644e36c5d897d36c559691ecaf9a5e6de5a0c0"
+    "sha256:4035948413e80ebea43cae2a53f956ea26939838f3ec0c2064a554cf9c0d28b9"
 )
 
 # The seed's placeholder values, restored verbatim on downgrade.

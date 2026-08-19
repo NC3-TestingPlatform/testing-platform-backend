@@ -12,6 +12,11 @@
         scan results with notify/extend/confirm and a 30-day grace
         period; 24-month audit records; erasure within 30 days of
         account deletion) - the approved specification figures.
+     3. Retention section reconciled: an explicit retention criterion
+        for user-added server data (kept while the account exists,
+        anonymized with it on deletion) and the audit-record carve-out
+        from the 30-day erasure (anonymized in the same pass, retained
+        anonymized for the remainder of their 24 months).
      statement.content_hash is the SHA-256 of this file's bytes;
      statement.content_uri points at this file on the public repository.
      Do not edit: a new text is a new file and a new statement version
@@ -89,17 +94,23 @@ account after one year of inactivity on the Testing Platform, we inform you that
 be
 replaced in our Database with a string called "DELETED”. The data collected about servers that have been added
 by
-you as user will not be deleted as we might use them internally, however they will not be connected to you
-anymore,
-since your account gets anonymized.
+you as user is retained for as long as your account exists; upon deletion of your account it is anonymized in
+the
+same pass, so it is no longer connected to you, and only the anonymized technical records may be kept for
+internal purposes.
 
 On the Testing Platform specifically, scan results are retained for
 twelve (12) months by default; you are notified before this period
 lapses and may extend it, export the data, or confirm deletion, after
 which the data is permanently deleted following a thirty (30) day grace
 period. Audit records are retained for twenty-four (24) months on their
-own legal basis. If you delete your account, all personal data
-associated with it is permanently removed within thirty (30) days.
+own legal basis (security monitoring and abuse investigation). If you
+delete your account, all personal data associated with it is permanently
+removed or irreversibly anonymized as described above within thirty (30)
+days; audit records are not exempt from that anonymization — the
+identifiers connecting them to you are replaced in the same pass — but
+the anonymized records remain for the rest of their twenty-four (24)
+months.
 
 However, if requested by local and national law, certain personal data may be retained for a longer period. For
 instance, for accounting purposes, such as, but limited to, payment of the services fees, data will be retained

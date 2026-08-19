@@ -10,6 +10,11 @@
         after your content is removed.'
      3. Termination: undefined 'Data Shared' removed from the survival
         list; capitalization aligned to the section names.
+     4. Your Account: the account-creation data list aligned with what
+        registration actually collects (a valid e-mail address and a
+        password, with an optional display name) - the source required
+        first and last name and a company or affiliation address, none
+        of which v4 collects.
      statement.content_hash is the SHA-256 of this file's bytes;
      statement.content_uri points at this file on the public repository.
      Do not edit: a new text is a new file and a new statement version
@@ -124,7 +129,7 @@ not authorized to use, or disclose your password or username to any other person
 name to be used by any other person to access the Services. You will be responsible for use of the Website
 and/or Services via your username and so will be liable for breach by anyone to whom you provide the details. To
 create an account, you must provide some information about yourself. If you create an account, you agree to
-provide your first and last name, a valid e-mail address, your company or affiliation address.
+provide a valid e-mail address and to choose a password; you may additionally provide an optional display name.
 
 You may delete your account on the website at any time. The deletion means the permanent anonymization of all
 your account and personal data.
