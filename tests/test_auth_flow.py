@@ -395,6 +395,7 @@ FAKE_SESSION: Any = SimpleNamespace(
     id=uuid7(),
     created_at=NOW,
     last_seen_at=NOW,
+    mfa_verified_at=None,
 )
 FAKE_IDENTITY = security.AuthenticatedSession(
     session_id=FAKE_SESSION.id,
@@ -404,8 +405,13 @@ FAKE_IDENTITY = security.AuthenticatedSession(
 
 
 @pytest.fixture
-def client() -> Any:
-    """A TestClient whose DB dependency yields a mock; overrides cleaned up."""
+def client(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A TestClient whose DB dependency yields a mock; overrides cleaned up.
+
+    The session views read MFA state through `service.mfa_status`; router
+    tests default to an unenrolled user and override deliberately.
+    """
+    monkeypatch.setattr(service, "mfa_status", lambda db, user_id: (False, None))
     app.dependency_overrides[api_db.auth_session] = lambda: MagicMock()
     with TestClient(app) as test_client:
         yield test_client
@@ -414,8 +420,11 @@ def client() -> Any:
 
 @pytest.fixture
 def authenticated(client: TestClient) -> TestClient:
-    """The client with the session dependency resolved to a fixed identity."""
+    """The client with both session dependencies resolved to a fixed identity."""
     app.dependency_overrides[security.require_session] = lambda: FAKE_IDENTITY
+    app.dependency_overrides[security.require_pending_or_current_session] = (
+        lambda: FAKE_IDENTITY
+    )
     return client
 
 

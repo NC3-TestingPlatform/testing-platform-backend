@@ -1,32 +1,50 @@
-"""The `/auth` operations: register, login, logout, session, password.
+"""The `/auth` operations: register, login, logout, session, password, MFA.
 
 `register` and `login` are anonymous by construction (they mint the identity
 everything else consumes) and sit behind the per-IP rate-limit dependencies.
-The other three require the session cookie via `CurrentSession`
-(`core/security.py`), which also publishes the `SessionCookie` scheme into
-their contract entries. Cookie writes happen here and nowhere else.
+Everything else requires the session cookie (`core/security.py`), which also
+publishes the `SessionCookie` scheme into the contract entries. A pending-MFA
+session is accepted by exactly three operations — `POST /auth/mfa/verify`
+(completes the factor), `POST /auth/logout` (revocation needs no assurance),
+and `GET /auth/session` (a reload mid-login must render the prompt) — via
+`PendingMfaSession`. Cookie writes happen here and nowhere else.
 """
+
+from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.orm import Session
 
 from nc3_testing_platform.core.api_db import AuthDbSession
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.security import (
+    NO_STORE_HEADERS,
     SESSION_COOKIE_CLEAR,
     SESSION_COOKIE_NAME,
+    CurrentMfaAssuredSession,
     CurrentSession,
+    PendingMfaSession,
     rate_limited,
 )
+from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.domains.auth import service
 from nc3_testing_platform.domains.auth.dependencies import (
     LoginRateLimited,
+    MfaVerifyRateLimited,
     RegisterRateLimited,
 )
 from nc3_testing_platform.domains.auth.models import UserSession
 from nc3_testing_platform.domains.auth.schemas import (
     LoginSubmission,
+    MfaConfirmSubmission,
+    MfaDisableSubmission,
+    MfaEnrollment,
+    MfaEnrollSubmission,
+    MfaVerifySubmission,
     PasswordChangeSubmission,
+    RecoveryCodes,
+    RecoveryCodesRegenerateSubmission,
     RegisteredUser,
     RegistrationSubmission,
     SessionInfo,
@@ -49,18 +67,33 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
-def _session_info(user: AppUser, session: UserSession) -> SessionInfo:
+def _session_info(db: Session, user: AppUser, session: UserSession) -> SessionInfo:
     idle_expires_at, absolute_expires_at = service.session_expiries(session)
+    mfa_enrolled, codes_remaining = service.mfa_status(db, user.id)
+    mfa_required = mfa_enrolled and session.mfa_verified_at is None
+    assurance_expires_at = (
+        session.mfa_verified_at
+        + timedelta(seconds=settings.auth_mfa_assurance_max_age_seconds)
+        if session.mfa_verified_at is not None
+        else None
+    )
     return SessionInfo(
         user_id=user.id,
         organization_id=user.organization_id,
         email=user.email,
-        display_name=user.display_name,
-        organization_role=user.organization_role,
+        # A pending session withholds the profile fields: a correct password
+        # alone reveals nothing it did not itself prove.
+        display_name=None if mfa_required else user.display_name,
+        organization_role=None if mfa_required else user.organization_role,
         session_created_at=session.created_at,
         last_seen_at=session.last_seen_at,
         idle_expires_at=idle_expires_at,
         absolute_expires_at=absolute_expires_at,
+        mfa_enrolled=mfa_enrolled,
+        mfa_required=mfa_required,
+        mfa_verified_at=session.mfa_verified_at,
+        mfa_assurance_expires_at=assurance_expires_at,
+        recovery_codes_remaining=codes_remaining,
     )
 
 
@@ -138,7 +171,9 @@ def login(
     """Open a server-side session and set the `__Host-session` cookie.
 
     Unknown email, disabled account, and wrong password all answer the same
-    `401`. A locked account answers `429` with `Retry-After`.
+    `401`. A locked account answers `429` with `Retry-After`. An MFA-enrolled
+    account receives a **pending** session (`mfa_required` true, profile
+    fields withheld): complete login via `POST /auth/mfa/verify`.
     """
     try:
         result = service.login(db, email=body.email, password=body.password)
@@ -154,7 +189,7 @@ def login(
             detail="Invalid email or password.",
         ) from None
     _set_session_cookie(response, result.token)
-    return _session_info(result.user, result.session)
+    return _session_info(db, result.user, result.session)
 
 
 @router.get(
@@ -162,12 +197,16 @@ def login(
     summary="The authenticated session",
     responses=problem_responses(401),
 )
-def read_session(current: CurrentSession, db: AuthDbSession) -> SessionInfo:
-    """The current user, organization, and server-side expiry horizon."""
+def read_session(current: PendingMfaSession, db: AuthDbSession) -> SessionInfo:
+    """The current user, organization, and server-side expiry horizon.
+
+    Accepts a pending-MFA session, reporting `mfa_required` with the profile
+    fields withheld, so a reload mid-login can render the second-factor step.
+    """
     user, session = service.session_snapshot(
         db, user_id=current.user_id, session_id=current.session_id
     )
-    return _session_info(user, session)
+    return _session_info(db, user, session)
 
 
 @router.post(
@@ -177,9 +216,13 @@ def read_session(current: CurrentSession, db: AuthDbSession) -> SessionInfo:
     responses=problem_responses(401),
 )
 def logout(
-    current: CurrentSession, response: Response, db: AuthDbSession
+    current: PendingMfaSession, response: Response, db: AuthDbSession
 ) -> None:
-    """Revoke the session server-side and clear the cookie."""
+    """Revoke the session server-side and clear the cookie.
+
+    Accepts a pending-MFA session: revocation needs no assurance, and an
+    abandoned or suspect pending login must be killable on the spot.
+    """
     service.logout(db, current.session_id)
     response.headers["Set-Cookie"] = SESSION_COOKIE_CLEAR
 
@@ -214,4 +257,228 @@ def change_password(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The current password did not verify.",
         ) from None
+    _set_session_cookie(response, result.token)
+
+
+def _mfa_locked(exc: service.MfaLockedError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="MFA verification is temporarily locked after repeated failures.",
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
+_WRONG_PASSWORD = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="The current password did not verify.",
+)
+_INVALID_CODE = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="The code did not verify.",
+)
+
+
+@router.post(
+    "/mfa/enroll",
+    status_code=status.HTTP_201_CREATED,
+    summary="Start TOTP enrollment",
+    responses={
+        201: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 409, 422, 500),
+    },
+)
+def enroll_mfa(
+    body: MfaEnrollSubmission,
+    current: CurrentSession,
+    response: Response,
+    db: AuthDbSession,
+) -> MfaEnrollment:
+    """Mint a TOTP seed and return the provisioning material once.
+
+    Requires the current password — enrollment is a privilege change. A
+    confirmed factor answers `409`: disable it first. Restarting an
+    unconfirmed enrollment replaces the seed.
+    """
+    try:
+        enrollment = service.enroll_mfa(
+            db, user_id=current.user_id, password=body.password
+        )
+    except service.WrongCurrentPasswordError:
+        raise _WRONG_PASSWORD from None
+    except service.MfaAlreadyEnrolledError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already enrolled; disable it before re-enrolling.",
+        ) from None
+    response.headers["Cache-Control"] = "no-store"
+    return MfaEnrollment(
+        secret_base32=enrollment.secret_base32,
+        otpauth_uri=enrollment.otpauth_uri,
+    )
+
+
+@router.post(
+    "/mfa/confirm",
+    summary="Confirm enrollment and mint the recovery codes",
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 409, 422, 500),
+        **rate_limited(),
+    },
+)
+def confirm_mfa(
+    body: MfaConfirmSubmission,
+    current: CurrentSession,
+    response: Response,
+    db: AuthDbSession,
+) -> RecoveryCodes:
+    """Prove possession of the authenticator and activate the factor.
+
+    The calling session becomes assured and every other session is revoked
+    (privilege change). The recovery codes are shown exactly once.
+    """
+    try:
+        codes = service.confirm_mfa(
+            db,
+            user_id=current.user_id,
+            session_id=current.session_id,
+            code=body.totp_code,
+        )
+    except service.MfaNotEnrolledError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No enrollment to confirm; start with POST /auth/mfa/enroll.",
+        ) from None
+    except service.MfaAlreadyEnrolledError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already confirmed.",
+        ) from None
+    except service.MfaLockedError as exc:
+        raise _mfa_locked(exc) from None
+    except service.InvalidMfaCodeError:
+        raise _INVALID_CODE from None
+    response.headers["Cache-Control"] = "no-store"
+    return RecoveryCodes(recovery_codes=codes)
+
+
+@router.post(
+    "/mfa/verify",
+    summary="Complete login or refresh MFA assurance",
+    responses={**problem_responses(401, 403, 409, 422, 500), **rate_limited()},
+    dependencies=[MfaVerifyRateLimited],
+)
+def verify_mfa(
+    body: MfaVerifySubmission,
+    current: PendingMfaSession,
+    response: Response,
+    db: AuthDbSession,
+) -> SessionInfo:
+    """Present a TOTP or recovery code against the confirmed factor.
+
+    On a pending session this completes login: the session is rotated and
+    the fresh cookie set (assurance starts now). On an assured session it
+    refreshes the assurance stamp in place — the step-up for operations that
+    answer `403` with problem type `mfa-stepup-required`.
+    """
+    pending = current.mfa_enrolled and current.mfa_verified_at is None
+    try:
+        result = service.verify_mfa(
+            db,
+            user_id=current.user_id,
+            session_id=current.session_id,
+            pending=pending,
+            totp_code=body.totp_code,
+            recovery_code=body.recovery_code,
+        )
+    except service.MfaNotEnrolledError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No confirmed MFA factor exists on this account.",
+        ) from None
+    except service.MfaLockedError as exc:
+        raise _mfa_locked(exc) from None
+    except service.InvalidMfaCodeError:
+        raise _INVALID_CODE from None
+    if result is not None:
+        _set_session_cookie(response, result.token)
+        return _session_info(db, result.user, result.session)
+    user, session = service.session_snapshot(
+        db, user_id=current.user_id, session_id=current.session_id
+    )
+    return _session_info(db, user, session)
+
+
+@router.post(
+    "/mfa/recovery-codes",
+    summary="Regenerate the recovery codes",
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 409, 422, 500),
+    },
+)
+def regenerate_recovery_codes(
+    body: RecoveryCodesRegenerateSubmission,
+    current: CurrentMfaAssuredSession,
+    response: Response,
+    db: AuthDbSession,
+) -> RecoveryCodes:
+    """Replace the whole recovery-code set; the previous set stops working.
+
+    Requires current MFA assurance and the current password: a hijacked
+    assured session must not silently invalidate the owner's codes.
+    """
+    try:
+        codes = service.regenerate_recovery_codes(
+            db, user_id=current.user_id, password=body.password
+        )
+    except service.WrongCurrentPasswordError:
+        raise _WRONG_PASSWORD from None
+    except service.MfaNotEnrolledError:  # pragma: no cover - gate proved it
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No confirmed MFA factor exists on this account.",
+        ) from None
+    response.headers["Cache-Control"] = "no-store"
+    return RecoveryCodes(recovery_codes=codes)
+
+
+@router.post(
+    "/mfa/disable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Disable MFA",
+    responses={**problem_responses(401, 403, 409, 422, 500), **rate_limited()},
+)
+def disable_mfa(
+    body: MfaDisableSubmission,
+    current: CurrentMfaAssuredSession,
+    response: Response,
+    db: AuthDbSession,
+) -> None:
+    """Soft-revoke the factor behind fresh assurance, password, and a code.
+
+    Sessions rotate (privilege change): the new cookie is set on this
+    response, other sessions are revoked. Spent material stays behind for
+    incident response; nothing is hard-deleted.
+    """
+    try:
+        result = service.disable_mfa(
+            db,
+            user_id=current.user_id,
+            current_session_id=current.session_id,
+            password=body.password,
+            totp_code=body.totp_code,
+            recovery_code=body.recovery_code,
+        )
+    except service.WrongCurrentPasswordError:
+        raise _WRONG_PASSWORD from None
+    except service.MfaNotEnrolledError:  # pragma: no cover - gate proved it
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No confirmed MFA factor exists on this account.",
+        ) from None
+    except service.MfaLockedError as exc:
+        raise _mfa_locked(exc) from None
+    except service.InvalidMfaCodeError:
+        raise _INVALID_CODE from None
     _set_session_cookie(response, result.token)
