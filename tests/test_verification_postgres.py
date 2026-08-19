@@ -503,7 +503,7 @@ def test_widening_a_proof_returns_the_new_scope_not_the_cached_row(
 
 
 def test_a_second_organization_cannot_claim_the_same_domain(
-    app_session: Session, seed: Seed, owner_engine: sa.Engine
+    app_session: Session, app_engine: sa.Engine, seed: Seed, owner_engine: sa.Engine
 ) -> None:
     """The claim adjudication, which only a real unique index can demonstrate.
 
@@ -517,7 +517,7 @@ def test_a_second_organization_cannot_claim_the_same_domain(
     _prove(app_session, seed, seed.asset_a, value)
     app_session.commit()
 
-    with _app_sessionmaker(app_session.get_bind())() as other:
+    with _app_sessionmaker(app_engine)() as other:
         rls.set_org_context(other, seed.org_b, None)
         # The proof is invisible from B, which is exactly why B must not be
         # allowed to decide for itself whether the domain is free.
@@ -531,8 +531,10 @@ def test_a_second_organization_cannot_claim_the_same_domain(
                 organization_id=seed.org_b,
             )
             other.flush()
+        diagnostic = getattr(raised.value.orig, "diag", None)
         assert (
-            raised.value.orig.diag.constraint_name == "uq_domain_verification_value"
+            getattr(diagnostic, "constraint_name", None)
+            == "uq_domain_verification_value"
         ), "the service discriminates on this exact name"
         other.rollback()
 
@@ -571,7 +573,7 @@ def test_a_savepoint_rollback_keeps_the_rls_context(
 
 
 def test_a_stamp_without_a_context_matches_nothing_and_raises_nothing(
-    app_session: Session, seed: Seed
+    app_session: Session, app_engine: sa.Engine, seed: Seed
 ) -> None:
     """Why the rowcount is checked at every call site.
 
@@ -583,7 +585,7 @@ def test_a_stamp_without_a_context_matches_nothing_and_raises_nothing(
     _issue(app_session, seed, seed.asset_a, token="context-tok")
     app_session.commit()
 
-    with _app_sessionmaker(app_session.get_bind())() as blind:
+    with _app_sessionmaker(app_engine)() as blind:
         assert repository.stamp_check(blind, seed.asset_a, code="dns.record-not-found") == 0
         blind.rollback()
 

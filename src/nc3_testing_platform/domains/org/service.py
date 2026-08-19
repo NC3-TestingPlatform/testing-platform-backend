@@ -29,20 +29,24 @@ def name_organization_if_unnamed(
     One conditional atomic UPDATE, never read-then-write: two verifications
     completing at the same time would otherwise both see a null `named_at` and the
     second would overwrite the first organization name. The `WHERE named_at IS
-    NULL` arm makes the promotion idempotent, and the rowcount is the answer —
-    the same idiom as `domains/auth/repository`'s conditional updates.
+    NULL` arm makes the promotion idempotent, and the returned row is the answer —
+    the same idiom, and the same reasoning, as `domains/auth/repository`'s
+    conditional updates.
 
     A false return is the ordinary case, not a failure: every verification after
     the first finds the name already settled.
 
     :returns: Whether this call is the one that named the organization.
     """
-    result = db.execute(
-        sa.update(Organization)
-        .where(Organization.id == organization_id, Organization.named_at.is_(None))
-        .values(name=value, named_at=sa.func.now())
+    named = (
+        db.scalars(
+            sa.update(Organization)
+            .where(Organization.id == organization_id, Organization.named_at.is_(None))
+            .values(name=value, named_at=sa.func.now())
+            .returning(Organization.id)
+        ).one_or_none()
+        is not None
     )
-    named = result.rowcount == 1
     if named:
         # B7 audit call site: workspace promoted to a named organization.
         logger.info("organization %s named by domain verification", organization_id)

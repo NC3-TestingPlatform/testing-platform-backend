@@ -196,14 +196,17 @@ def stamp_check(db: Session, asset_id: uuid.UUID, *, code: str | None) -> int:
     field is echoed in the response, so a stale one would report a verified asset
     alongside yesterday's reason.
 
-    :returns: Rows affected, which the caller **must** check. Under FORCE RLS a
-        lost organization context makes this match nothing and raise nothing, so
-        the rowcount is the only way to tell a refusal that was recorded from one
-        that silently was not.
+    :returns: How many challenges were stamped, which the caller **must** check.
+        Under FORCE RLS a lost organization context makes this match nothing and
+        raise nothing, so it is the only way to tell a refusal that was recorded
+        from one that silently was not. `RETURNING` rather than a rowcount, for
+        the same reason `domains/auth/repository` uses it: the returned rows are
+        the write's own account of itself.
     """
-    result = db.execute(
+    stamped = db.scalars(
         sa.update(DomainVerificationChallenge)
         .where(DomainVerificationChallenge.asset_id == asset_id)
         .values(last_recheck_at=sa.func.now(), failure_code=code)
-    )
-    return result.rowcount
+        .returning(DomainVerificationChallenge.asset_id)
+    ).all()
+    return len(stamped)

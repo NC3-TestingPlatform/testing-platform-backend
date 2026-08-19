@@ -171,6 +171,19 @@ def test_a_verified_verdict_never_carries_a_failure_code() -> None:
 # --- run_check: ordering and refusals ---------------------------------------
 
 
+class _Violation(Exception):
+    """A DBAPI error shaped like psycopg's, which carries the constraint name.
+
+    Constructed through `IntegrityError`'s `orig` argument rather than assigned
+    afterwards, because `orig` is typed as an exception and the service reads
+    `orig.diag.constraint_name` off it.
+    """
+
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__(constraint_name)
+        self.diag = SimpleNamespace(constraint_name=constraint_name)
+
+
 class _FakeSession:
     """Records the sequence of transaction boundaries, which is what matters here."""
 
@@ -348,10 +361,7 @@ def test_a_lost_claim_is_refused_and_the_reason_is_recorded(wired) -> None:
     wired.monkeypatch.setattr(
         service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
     )
-    conflict = IntegrityError("stmt", {}, Exception("dup"))
-    conflict.orig = SimpleNamespace(
-        diag=SimpleNamespace(constraint_name="uq_domain_verification_value")
-    )
+    conflict = IntegrityError("stmt", {}, _Violation("uq_domain_verification_value"))
 
     def raise_conflict(db: object, **kw: object) -> None:
         raise conflict
@@ -367,10 +377,7 @@ def test_another_integrity_error_is_not_reported_as_a_lost_claim(wired) -> None:
     wired.monkeypatch.setattr(
         service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
     )
-    other = IntegrityError("stmt", {}, Exception("fk"))
-    other.orig = SimpleNamespace(
-        diag=SimpleNamespace(constraint_name="fk_domain_verification_asset_value")
-    )
+    other = IntegrityError("stmt", {}, _Violation("fk_domain_verification_asset_value"))
 
     def raise_other(db: object, **kw: object) -> None:
         raise other
