@@ -50,6 +50,11 @@ class VerificationFailureCode(StrEnum):
     RESOLVER_FAILURE = "dns.resolver-failure"
     CORROBORATION_NOT_REACHED = "dns.corroboration-not-reached"
     CHALLENGE_EXPIRED = "challenge.expired"
+    # The token was replaced while the lookup was in flight, so this check proves
+    # nothing about the token that now stands. Distinct from "not found": the new
+    # value was never looked for, and telling the user their record is missing
+    # would be a false statement about DNS they may have published correctly.
+    CHALLENGE_SUPERSEDED = "challenge.superseded"
     ZONE_REQUIRES_DNSSEC = "policy.zone-requires-dnssec"
     # The check could not run. Nothing was recorded.
     RESOLVER_UNAVAILABLE = "platform.resolver-unavailable"

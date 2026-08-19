@@ -343,7 +343,11 @@ def run_check(
     if challenge is None:
         raise VerificationNotStartedError
     if challenge.verification_token != token:
-        _stamp(db, asset_id, VerificationFailureCode.RECORD_NOT_FOUND)
+        # Not "record not found": this check resolved the *old* token, so it says
+        # nothing about the one that now stands, and claiming the record is missing
+        # would be a false statement about DNS the user may have published
+        # correctly. The recheck stamp still lands, so the attempt is visible.
+        _stamp(db, asset_id, VerificationFailureCode.CHALLENGE_SUPERSEDED)
         db.commit()
         rls.set_org_context(db, organization_id, user_id)
         return _state(_db_now(db), repository.proof_for(db, asset_id), challenge)

@@ -353,7 +353,9 @@ def test_a_regenerated_token_is_not_proved_against_the_stale_value(wired) -> Non
 
     wired.monkeypatch.setattr(service.repository, "upsert_proof", explode)
     _run(wired)
-    assert wired.state["stamped"] == [VerificationFailureCode.RECORD_NOT_FOUND.value]
+    # Not RECORD_NOT_FOUND: the new token was never looked for, so saying the
+    # record is missing would be false about DNS the user may have got right.
+    assert wired.state["stamped"] == [VerificationFailureCode.CHALLENGE_SUPERSEDED.value]
 
 
 def test_a_lost_claim_is_refused_and_the_reason_is_recorded(wired) -> None:
