@@ -24,6 +24,7 @@ contract: the BFF calls this API as an ordinary client.
 """
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
@@ -36,11 +37,13 @@ from sqlalchemy.orm import Session
 
 from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.api_db import AuthDbSession
+from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import (
     PROBLEM_MEDIA_TYPE,
     PROBLEM_MFA_ENROLLMENT_REQUIRED,
     PROBLEM_MFA_REQUIRED,
     PROBLEM_MFA_STEPUP_REQUIRED,
+    PROBLEM_ORG_ROLE_REQUIRED,
     ProblemDetail,
     ProblemException,
 )
@@ -122,6 +125,12 @@ class AuthenticatedSession:
     mfa_enrolled: bool = False
     mfa_verified_at: datetime | None = None
     observed_at: datetime | None = None
+    # Organization role (B6a): read in-policy from `app_user` alongside the MFA
+    # state, never from the definer bootstrap. The default is deliberately the
+    # least-privileged member — a construction that forgets it must fail a
+    # `require_org_role(ORGANIZATION_ADMIN)` gate, not pass it — and it keeps
+    # pre-B6a constructions (tests, fakes) valid, as the MFA defaults above do.
+    organization_role: OrganizationRole = OrganizationRole.MEMBER
 
 
 # The pre-context lookup (IDR-012): runs as the nc3_auth_definer-owned
@@ -146,17 +155,25 @@ def _session_refused(clear_cookie: bool) -> HTTPException:
     )
 
 
-# In-policy MFA state, read after the user arm opens: assurance lives on the
-# session row and enrollment is derived from `user_mfa` (§13.6). Deliberately
-# NOT part of the definer bootstrap, whose read surface stays at B3's three
-# tables — the definer owner never reaches the seed table. Raw SQL, not the
-# ORM model — core must not import `domains/auth`.
+# In-policy session state, read after the user arm opens: MFA assurance lives
+# on the session row, enrollment is derived from `user_mfa` (§13.6), and the
+# organization role from `app_user` (B6a). Deliberately NOT part of the definer
+# bootstrap, whose read surface stays at B3's three tables — the definer owner
+# never reaches the seed table. Raw SQL, not the ORM model — core must not
+# import `domains/auth`.
+#
+# The `app_user` join is reachable here because its `tenant_rows` policy carries
+# a user arm (`id = app.current_user`), which `set_user_context` above has just
+# opened; `nc3_auth` holds SELECT on the table (B3 grants). One extra column, no
+# extra round trip, and no reason to touch the definer function.
 _MFA_STATE = sa.text(
     "SELECT s.mfa_verified_at,"
     " EXISTS (SELECT 1 FROM user_mfa m"
     " WHERE m.user_id = :user_id AND m.confirmed_at IS NOT NULL)"
-    " AS mfa_enrolled"
-    " FROM user_session s WHERE s.id = :session_id"
+    " AS mfa_enrolled,"
+    " u.organization_role"
+    " FROM user_session s JOIN app_user u ON u.id = s.user_id"
+    " WHERE s.id = :session_id"
 )
 
 
@@ -211,6 +228,11 @@ def _resolve_session(
         mfa_enrolled=bool(state.mfa_enrolled),
         mfa_verified_at=state.mfa_verified_at,
         observed_at=row.observed_at,
+        # Raw SQL returns the PostgreSQL enum as a string; coerce it here so
+        # every gate downstream compares enum to enum. A bare string would
+        # compare unequal to every `OrganizationRole` member and silently deny
+        # every role gate.
+        organization_role=OrganizationRole(state.organization_role),
     )
 
 
@@ -312,6 +334,57 @@ def declare_mfa_assurance(token: SessionAuth) -> None:
 
 # Attach as `dependencies=[MfaAssuranceDeclared]` on a mock operation.
 MfaAssuranceDeclared = Depends(declare_mfa_assurance)
+
+
+def require_org_role(
+    role: OrganizationRole,
+) -> Callable[[AuthenticatedSession], AuthenticatedSession]:
+    """Build a dependency demanding exactly `role` within the caller's org.
+
+    Exact match, not a hierarchy: v4.0 has two roles and no ordering between
+    them (`member`, `organization_admin`), so a ranking would be invented
+    rather than modelled. Fine-grained permissions were deliberately left room
+    for when the single-admin restriction was withdrawn (IDR-016); whoever
+    adds them decides the ordering then.
+
+    The authorization half of what :func:`require_current_mfa_assurance`
+    deliberately leaves alone: that gate proves *who* is calling, this one
+    proves *what they may do* inside their organization. Parameterized rather
+    than a one-off admin check so the next role-gated operation reuses it.
+
+    What this gate is, and is not: registration provisions the registrant as
+    `organization_admin` of their own workspace organization (IDR-016), so an
+    attacker who just signed up is an admin of their own tenant from the first
+    request. This is **insider governance** — it stops a non-admin member of a
+    real, multi-person organization from taking an admin-only action — and it
+    is **not** resistance to anonymous abuse. The controls that face an
+    external attacker are the DNS proof itself, the platform-wide claim
+    uniqueness constraint, and rate limiting. Do not cite this gate as
+    evidence that an operation is hard to reach.
+    """
+
+    def dependency(current: CurrentSession) -> AuthenticatedSession:
+        if current.organization_role is not role:
+            raise ProblemException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This operation requires the "
+                    f"{role.value} role in your organization."
+                ),
+                problem_type=PROBLEM_ORG_ROLE_REQUIRED,
+            )
+        return current
+
+    return dependency
+
+
+# Attach as `dependencies=[OrgAdminRequired]`, or take the parameter form
+# `CurrentOrgAdminSession` when the handler needs the identity.
+OrgAdminRequired = Depends(require_org_role(OrganizationRole.ORGANIZATION_ADMIN))
+CurrentOrgAdminSession = Annotated[
+    AuthenticatedSession,
+    Depends(require_org_role(OrganizationRole.ORGANIZATION_ADMIN)),
+]
 
 
 def verify_token(token: str) -> dict[str, object]:

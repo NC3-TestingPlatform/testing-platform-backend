@@ -22,6 +22,10 @@ from uuid6 import uuid7
 
 from nc3_testing_platform.core import api_db, redis_utils, security
 from nc3_testing_platform.core.enums import OrganizationRole
+from nc3_testing_platform.core.errors import (
+    PROBLEM_TYPE_PREFIX,
+    ProblemException,
+)
 from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.domains.auth import service
 from nc3_testing_platform.domains.auth.schemas import RegistrationSubmission
@@ -337,9 +341,20 @@ def _bootstrap_row(**overrides: Any) -> SimpleNamespace:
 
 
 def _db_returning(row: SimpleNamespace | None) -> MagicMock:
-    """A session mock whose bootstrap query yields the given row."""
+    """A session mock whose bootstrap query yields the given row.
+
+    The second, in-policy read (MFA state plus the organization role, B6a)
+    answers an unenrolled member — what every test reaching that far wants.
+    Stating it also removes an accidental reliance on `MagicMock` truthiness
+    for `mfa_enrolled`.
+    """
     db = MagicMock()
     db.execute.return_value.one_or_none.return_value = row
+    db.execute.return_value.one.return_value = SimpleNamespace(
+        mfa_verified_at=None,
+        mfa_enrolled=False,
+        organization_role=OrganizationRole.MEMBER.value,
+    )
     return db
 
 
@@ -379,6 +394,59 @@ def test_require_session_happy_path_touches_and_returns() -> None:
     assert resolved.organization_id == row.organization_id
     statements = [str(call.args[0]) for call in db.execute.call_args_list]
     assert any("UPDATE user_session SET last_seen_at" in s for s in statements)
+
+
+# --- organization-role gate (B6a) -------------------------------------------
+
+
+def _identity(role: OrganizationRole = OrganizationRole.MEMBER) -> Any:
+    return security.AuthenticatedSession(
+        session_id=uuid7(),
+        user_id=uuid7(),
+        organization_id=uuid7(),
+        organization_role=role,
+    )
+
+
+def test_authenticated_session_defaults_to_member() -> None:
+    """Least privilege by default: a forgotten role must fail an admin gate."""
+    resolved = security.AuthenticatedSession(
+        session_id=uuid7(), user_id=uuid7(), organization_id=uuid7()
+    )
+    assert resolved.organization_role is OrganizationRole.MEMBER
+
+
+def test_require_org_role_admits_the_matching_role() -> None:
+    """The dependency hands back the same session when the role matches."""
+    identity = _identity(OrganizationRole.ORGANIZATION_ADMIN)
+    gate = security.require_org_role(OrganizationRole.ORGANIZATION_ADMIN)
+    assert gate(identity) is identity
+
+
+def test_require_org_role_refuses_a_member() -> None:
+    """A member answers 403 with the registered org-role problem type."""
+    gate = security.require_org_role(OrganizationRole.ORGANIZATION_ADMIN)
+    with pytest.raises(ProblemException) as excinfo:
+        gate(_identity())
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.problem_type == f"{PROBLEM_TYPE_PREFIX}org-role-required"
+
+
+def test_resolved_session_carries_the_role_as_an_enum() -> None:
+    """Raw SQL yields the PG enum as a string; the resolver must coerce it.
+
+    Without the coercion every gate compares `str` to `OrganizationRole` and
+    silently denies, which no unit test asserting a refusal would catch.
+    """
+    row = _bootstrap_row()
+    db = _db_returning(row)
+    db.execute.return_value.one.return_value = SimpleNamespace(
+        mfa_verified_at=None,
+        mfa_enrolled=False,
+        organization_role=OrganizationRole.ORGANIZATION_ADMIN.value,
+    )
+    resolved = security.require_session("token", db)
+    assert resolved.organization_role is OrganizationRole.ORGANIZATION_ADMIN
 
 
 # --- router: cookies, problem mapping, CSRF, rate limits ---------------------
