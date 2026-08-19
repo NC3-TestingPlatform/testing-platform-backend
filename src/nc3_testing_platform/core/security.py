@@ -166,6 +166,16 @@ def _session_refused(clear_cookie: bool) -> HTTPException:
 # a user arm (`id = app.current_user`), which `set_user_context` above has just
 # opened; `nc3_auth` holds SELECT on the table (B3 grants). One extra column, no
 # extra round trip, and no reason to touch the definer function.
+#
+# Note the policy's *other* arm is `organization_id = app.current_org`, which
+# would open same-org visibility of every member's row. It cannot match here
+# because `set_user_context` clears the org GUC to '' and `NULLIF(...)::uuid`
+# makes that NULL. The read is confined to the caller's own row by the choice
+# of context helper, not by the query — do not move this under an org context.
+#
+# `.one()` is safe against a missing `app_user`: the FK carries ON DELETE
+# CASCADE, so a session row cannot outlive its user. If that ever changes, this
+# becomes a 500 on an auth path.
 _MFA_STATE = sa.text(
     "SELECT s.mfa_verified_at,"
     " EXISTS (SELECT 1 FROM user_mfa m"
@@ -392,7 +402,11 @@ def require_org_role(
     """
 
     def dependency(current: CurrentSession) -> AuthenticatedSession:
-        if current.organization_role is not role:
+        # `!=` rather than `is not`: `OrganizationRole` is a StrEnum, so this is
+        # equally strict while not depending on member identity surviving every
+        # import path. Both directions fail closed — a bare string compares
+        # unequal and is refused — but equality needs no such assumption.
+        if current.organization_role != role:
             raise ProblemException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(

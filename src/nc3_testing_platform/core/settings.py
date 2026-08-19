@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     # so a per-organization budget bounds one account rather than one attacker.
     # The load-bearing global cap belongs with the DNS check (B6b / US #263),
     # where the expensive operation is.
+    # Not yet enforced: no consumer until the verification endpoints are
+    # realized (task #270). Declared here so the endpoint lands with its policy
+    # already reviewed, not so a config audit can count it as a live control.
     verification_challenge_rate_limit: int = Field(default=10, ge=1)
     verification_challenge_rate_window_seconds: int = Field(default=300, ge=1)
 

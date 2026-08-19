@@ -59,7 +59,7 @@ def test_covers_worked_examples(
 
 @pytest.mark.parametrize(
     "malformed",
-    ["", ".", "..", "a..b", ".example.lu", "   ", "a...b"],
+    ["", ".", "..", "a..b", ".example.lu", "   ", "a...b", "example.lu.."],
 )
 def test_covers_refuses_malformed_names_on_either_side(malformed: str) -> None:
     """An empty label is not a name — it covers, and is covered by, nothing.
@@ -136,8 +136,9 @@ def test_generate_token_is_unpredictable_and_url_safe() -> None:
     for token in tokens:
         assert token.isascii()
         assert " " not in token and '"' not in token
-        # 32 bytes base64url-encoded, unpadded.
-        assert len(token) >= 40
+        # 32 bytes base64url-encoded, unpadded, is exactly 43 characters. Pinned
+        # rather than lower-bounded so a reduction in entropy fails the test.
+        assert len(token) == 43
 
 
 # --- token_matches -----------------------------------------------------------
@@ -197,3 +198,26 @@ def test_token_does_not_match_a_different_token() -> None:
     ours = verification.generate_token()
     theirs = verification.generate_token()
     assert verification.token_matches(ours, [[theirs.encode()]]) is False
+
+
+def test_token_matches_refuses_a_non_ascii_token_without_raising() -> None:
+    """No token this platform issues is non-ASCII; degrade, do not explode.
+
+    A corrupted or hand-edited stored value must answer "no match" rather than
+    raising UnicodeEncodeError out of whatever call site handed it over.
+    """
+    assert verification.token_matches("tökén", [[b"t\xc3\xb6k\xc3\xa9n"]]) is False
+
+
+# --- fail-closed dispatch ----------------------------------------------------
+
+
+def test_covers_refuses_an_unhandled_scope() -> None:
+    """An unknown scope raises rather than falling through to the wider arm.
+
+    The dispatch is exhaustive on purpose: an `else` would map any future scope
+    onto zone coverage, granting rights over names nobody proved. Same rule the
+    normalization layer states for unknown vocabulary (IDR-018).
+    """
+    with pytest.raises(ValueError, match="unhandled verification scope"):
+        verification.covers("example.lu", "not-a-scope", "sub.example.lu")  # type: ignore[arg-type]

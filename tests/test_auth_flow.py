@@ -432,6 +432,29 @@ def test_require_org_role_refuses_a_member() -> None:
     assert excinfo.value.problem_type == f"{PROBLEM_TYPE_PREFIX}org-role-required"
 
 
+def test_org_scoped_app_session_asserts_both_arms_and_returns_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tenant session is handed back with the caller's context asserted.
+
+    Both arms: the org GUC scopes tenant tables, and the user GUC is what
+    user-owned rows on the same connection key off. Returning the identical
+    session object matters — FastAPI caches `AppDbSession`, so the handler must
+    receive the very transaction the context was set on.
+    """
+    calls: list[tuple[Any, Any, Any]] = []
+    monkeypatch.setattr(
+        security.rls,
+        "set_org_context",
+        lambda db, org, user: calls.append((db, org, user)),
+    )
+    db = MagicMock()
+    identity = _identity(OrganizationRole.ORGANIZATION_ADMIN)
+    returned = security.org_scoped_app_session(identity, db)
+    assert calls == [(db, identity.organization_id, identity.user_id)]
+    assert returned is db
+
+
 def test_resolved_session_carries_the_role_as_an_enum() -> None:
     """Raw SQL yields the PG enum as a string; the resolver must coerce it.
 
@@ -469,6 +492,10 @@ FAKE_IDENTITY = security.AuthenticatedSession(
     session_id=FAKE_SESSION.id,
     user_id=FAKE_USER.id,
     organization_id=FAKE_USER.organization_id,
+    # Kept in step with FAKE_USER on purpose. Omitting it silently defaults to
+    # MEMBER, so the first test of an `OrgAdminRequired` route reusing this
+    # fixture would pass a member off as the admin it names and prove nothing.
+    organization_role=FAKE_USER.organization_role,
 )
 
 

@@ -39,7 +39,13 @@ def _labels(name: str) -> tuple[str, ...]:
     a leading dot — is not a name, and returning ``()`` makes every comparison
     below refuse it rather than silently treating it as a suffix of everything.
     """
-    cleaned = name.strip().rstrip(".").lower()
+    cleaned = name.strip()
+    # One trailing dot is the root label and is presentation, not content;
+    # more than one is a malformed name and must fall through to the empty-label
+    # refusal below rather than being quietly normalised away by `rstrip`.
+    if cleaned.endswith("."):
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.lower()
     if not cleaned:
         return ()
     parts = tuple(cleaned.split("."))
@@ -59,6 +65,14 @@ def covers(proof_value: str, proof_scope: VerificationScope, target: str) -> boo
     break on a label boundary. A string ``endswith`` would make
     `evil-example.lu` a member of `example.lu`, which is the whole bug this
     exists to avoid.
+
+    :raises ValueError: On a scope this function does not handle. The dispatch
+        is exhaustive on purpose: an ``else`` falling through to the zone arm
+        would map any future scope — or a caller bug — onto the *more*
+        permissive answer. Refusing loudly follows the same rule the
+        normalization layer states for unknown vocabulary (IDR-018): a guessed
+        answer is worse than a failed request, and here a guess grants scanning
+        rights over a domain nobody proved.
     """
     proof_labels = _labels(proof_value)
     target_labels = _labels(target)
@@ -66,7 +80,9 @@ def covers(proof_value: str, proof_scope: VerificationScope, target: str) -> boo
         return False
     if proof_scope is VerificationScope.EXACT:
         return proof_labels == target_labels
-    return target_labels[-len(proof_labels) :] == proof_labels
+    if proof_scope is VerificationScope.ZONE:
+        return target_labels[-len(proof_labels) :] == proof_labels
+    raise ValueError(f"unhandled verification scope: {proof_scope!r}")
 
 
 def token_matches(token: str, rrset: Iterable[Sequence[bytes]]) -> bool:
@@ -80,13 +96,19 @@ def token_matches(token: str, rrset: Iterable[Sequence[bytes]]) -> bool:
     token inside a longer string.
 
     Several providers legitimately publish at `_nc3-verify.<domain>`, so the
-    RRset routinely holds records that are not ours. Every RR is examined
-    rather than stopping at the first hit, keeping the work independent of
-    where in the set the match sits.
+    RRset routinely holds records that are not ours and a non-match is the
+    ordinary case, not a fault.
+
+    A non-ASCII token cannot be one this platform issued — `generate_token`
+    emits base64url — so it degrades to "no match" rather than raising
+    `UnicodeEncodeError` at whatever call site handed it over.
     """
+    if not token.isascii():
+        return False
     expected = token.encode("ascii")
-    matched = False
-    for strings in rrset:
-        if hmac.compare_digest(b"".join(strings), expected):
-            matched = True
-    return matched
+    # `compare_digest` over `==` is convention here rather than necessity: the
+    # token is published in public DNS, so there is no secret whose comparison
+    # timing could leak. Short-circuiting is fine for the same reason.
+    return any(
+        hmac.compare_digest(b"".join(strings), expected) for strings in rrset
+    )
