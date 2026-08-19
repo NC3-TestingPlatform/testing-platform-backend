@@ -48,6 +48,11 @@ REALIZED_OPERATIONS = {
     ("get", "/api/v1/auth/session"),
     ("post", "/api/v1/auth/logout"),
     ("post", "/api/v1/auth/password"),
+    ("post", "/api/v1/auth/mfa/enroll"),
+    ("post", "/api/v1/auth/mfa/confirm"),
+    ("post", "/api/v1/auth/mfa/verify"),
+    ("post", "/api/v1/auth/mfa/recovery-codes"),
+    ("post", "/api/v1/auth/mfa/disable"),
 }
 
 _CLAIM_TOKEN = "9xK2mQ7pL4vR8nT1jH5gF3dS6aW0zYbUcElOnAiKrXs"

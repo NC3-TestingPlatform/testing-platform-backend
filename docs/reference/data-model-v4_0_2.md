@@ -4,7 +4,7 @@
 
 **Scope:** Based on NC3 Testing Platform v4.0 (MVP) requirements; entities, columns, and constraints.
 
-**Changes from v4.0.1** (ER design review, Taiga #161): the four constraint candidates deferred from the PR #15 review are folded in — lower bounds on `audit_event.retention_until` and `file_upload.purge_due_at`, non-empty `modules` on `scan_job` and `schedule` (§14), and the §3.5 erasure rule for `organization_invitation` rows identifying an erased user. No table, column, or type changes.
+**Changes from v4.0.1** (ER design review, Taiga #161): the four constraint candidates deferred from the PR #15 review are folded in — lower bounds on `audit_event.retention_until` and `file_upload.purge_due_at`, non-empty `modules` on `scan_job` and `schedule` (§14), and the §3.9 erasure rule for `organization_invitation` rows identifying an erased user. No table, column, or type changes.
 
 ## 1. Scope, terminology, and system boundaries
 
@@ -40,7 +40,7 @@ Conventions:
 
 | Boundary                          | Input used by this model                                                                       | Output or reference stored here                                                                                                   |
 |-----------------------------------|------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| Identity provider                 | Subject identifier, projected user claims, current MFA assurance, platform-administrator claim | `app_user.identity_subject` and user foreign keys. MFA assurance and platform-administrator status are evaluated at request time. |
+| Identity provider                 | Subject identifier, projected user claims, current MFA assurance, platform-administrator claim | `app_user.identity_subject` and user foreign keys. In v4.0 the platform is its own identity provider (Non-functional v0.11): credentials are §3.5, MFA factors §3.7/§3.8, and assurance the §3.6 session stamp, evaluated at request time. Platform-administrator status stays evaluated at request time. |
 | Executable-test registry          | Test key, version, module, classification, configuration schema, result schema                 | Immutable execution metadata copied to `scan_task`.                                                                               |
 | Temporary file storage            | Uploaded file bytes referenced by a storage key; purge completion                              | `file_upload` metadata, storage reference, and purge timestamps.                                                                  |
 | Scan queue and workers            | `scan_task.id` as the queue task identifier, plus task configuration                           | Task status, cancellation outcome, `scan_result`, and `finding` rows. Queue topology and transport stay queue-owned.              |
@@ -189,21 +189,6 @@ Rules:
 - The plaintext token is sent in the invitation link and is never stored.
 - Acceptance is atomic. It requires an authenticated user whose verified email matches the invitation and who does not already belong to another organization. It sets `accepted_at` and `accepted_by_user_id` together; the latter may become null through user erasure.
 
-### 3.5 User erasure treatment
-
-Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque user-scope `key_envelope.id` value, without a foreign key to the envelope or the user.
-
-| Reference category                     | Examples                                                                                | Erasure behavior                                                                                                                                              |
-|----------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| User-owned operational data            | Notifications and user-owned API keys                                                   | Delete with the user.                                                                                                                                         |
-| Attribution on organization-owned data | Asset creator, scan trigger, verification requester, schedule creator, report generator | Keep the organization-owned row and set the user foreign key to null.                                                                                         |
-| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-scope KEK. Delete the user-scope `key_envelope` during erasure. |
-| Email-addressed invitations            | `organization_invitation.email`                                                         | Delete every invitation row whose normalized email identifies the erased user — the spent invitation that admitted them and any live ones addressed to them. Superseded attempts stay represented in `audit_event`. |
-
-Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, nulls attribution references, and deletes `organization_invitation` rows whose normalized email identifies the erased user, before the request is closed.
-
-Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
-
 ### 3.5 `user_credential` (B3 / US #79)
 
 User-private row: RLS user arm only (`user_id = app.current_user`), granted to the `nc3_auth` role alone — the API service's credential-surface connection. The password hash is argon2id, encrypted (AES-256-GCM, `nonce || ct`) under the user-scope KEK of §3.3, so user erasure crypto-shreds it even out of backups.
@@ -221,7 +206,7 @@ User-private row: RLS user arm only (`user_id = app.current_user`), granted to t
 
 ### 3.6 `user_session` (B3 / US #79)
 
-User-private row, same RLS class and role as §3.5. One row per browser session (IDR-010); the cookie holds the token, the row holds its SHA-256. The pre-context resolution token hash → session is the `auth_session_bootstrap` SECURITY DEFINER lookup (IDR-012); idle/absolute timeouts are enforced by the application against these stamps. §13.6 holds: MFA assurance will live on the session, never as a User boolean.
+User-private row, same RLS class and role as §3.5. One row per browser session (IDR-010); the cookie holds the token, the row holds its SHA-256. The pre-context resolution token hash → session is the `auth_session_bootstrap` SECURITY DEFINER lookup (IDR-012); idle/absolute timeouts are enforced by the application against these stamps. §13.6 holds: MFA assurance lives on the session (`mfa_verified_at`, B4 / US #80), never as a User boolean.
 
 | Column         | Type        | Constraints                                              |
 |----------------|-------------|-----------------------------------------------------------|
@@ -231,6 +216,37 @@ User-private row, same RLS class and role as §3.5. One row per browser session 
 | `created_at`   | timestamptz | Not null; anchors the absolute timeout                   |
 | `last_seen_at` | timestamptz | Not null; anchors the idle timeout                       |
 | `revoked_at`   | timestamptz | Nullable; set by logout and session rotation             |
+| `mfa_verified_at` | timestamptz | Nullable; current MFA assurance stamp (B4 / US #80): set by confirm/verify, refreshed on step-up, compared against the configured max age |
+
+### 3.7 `user_mfa` (B4 / US #80)
+
+User-private row, same RLS class and role as §3.5, one row per user. The TOTP seed is AES-256-GCM under the user-scope KEK, so user erasure crypto-shreds it like the password hash. Disable is a **soft-revoke** — the seed and `confirmed_at` are nulled, the row survives; `nc3_auth` holds no DELETE (the erasure story owns hard deletion). Enrollment state is derived (`confirmed_at IS NOT NULL`), read in-policy after the RLS user context opens — the `auth_session_bootstrap` definer function does not join this table.
+
+| Column                   | Type        | Constraints                                                    |
+|--------------------------|-------------|----------------------------------------------------------------|
+| `id`                     | UUID        | Primary key                                                    |
+| `user_id`                | UUID        | Not null; unique; foreign key to `app_user.id` (cascade)       |
+| `totp_secret_ciphertext` | bytea       | Nullable (nulled on disable); RFC 6238 seed under the user KEK |
+| `confirmed_at`           | timestamptz | Nullable; set when possession is proven                        |
+| `last_used_step`         | bigint      | Nullable; last accepted TOTP step (replay refusal)             |
+| `failed_count`           | integer     | Not null; default `0`; MFA verify failure counter              |
+| `lockout_count`          | integer     | Not null; default `0`; consecutive-lockout escalator           |
+| `locked_until`           | timestamptz | Nullable; escalating lockout horizon (doubling, capped)        |
+| `created_at`             | timestamptz | Not null                                                       |
+| `updated_at`             | timestamptz | Not null                                                       |
+
+### 3.8 `mfa_recovery_code` (B4 / US #80)
+
+User-private row, same RLS class and role as §3.5. One row per one-time code, stored as SHA-256 of the normalized text — 80-bit random values are index keys like session tokens, not passwords, so no KDF. `used_at` burns a spent code (a single conditional UPDATE, the one-time guarantee); `superseded_at` burns a replaced set. Rows are never deleted in-band; the hashes are not crypto-shreddable and are the erasure story's concern (hard delete).
+
+| Column          | Type        | Constraints                                                            |
+|-----------------|-------------|-------------------------------------------------------------------------|
+| `id`            | UUID        | Primary key                                                            |
+| `user_id`       | UUID        | Not null; foreign key to `app_user.id` (cascade); indexed              |
+| `code_hash`     | bytea       | Not null; unique per user (`user_id, code_hash`) — a global unique index would be a cross-tenant existence oracle |
+| `used_at`       | timestamptz | Nullable; spent stamp (one-time use)                                   |
+| `superseded_at` | timestamptz | Nullable; set on regeneration and disable                              |
+| `created_at`    | timestamptz | Not null                                                               |
 
 ```mermaid
 erDiagram
@@ -242,6 +258,21 @@ erDiagram
     APP_USER o|--o{ ORGANIZATION_INVITATION: invites
     APP_USER o|--o{ ORGANIZATION_INVITATION: accepts
 ```
+
+### 3.9 User erasure treatment
+
+Plain `app_user.id` values appear only where the reference can be removed during erasure. Retained evidence stores the opaque user-scope `key_envelope.id` value, without a foreign key to the envelope or the user.
+
+| Reference category                     | Examples                                                                                | Erasure behavior                                                                                                                                              |
+|----------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| User-owned operational data            | Notifications and user-owned API keys                                                   | Delete with the user.                                                                                                                                         |
+| Attribution on organization-owned data | Asset creator, scan trigger, verification requester, schedule creator, report generator | Keep the organization-owned row and set the user foreign key to null.                                                                                         |
+| Immutable retained evidence            | Statement responses and audit events                                                    | Store no `app_user.id`. Encrypt identity and other user PII with a per-event DEK wrapped by the user-scope KEK. Delete the user-scope `key_envelope` during erasure. |
+| Email-addressed invitations            | `organization_invitation.email`                                                         | Delete every invitation row whose normalized email identifies the erased user — the spent invitation that admitted them and any live ones addressed to them. Superseded attempts stay represented in `audit_event`. |
+
+Account erasure completes within 30 days. The workflow deletes the user-scope `key_envelope`, deletes the `app_user` row and user-owned data, nulls attribution references, and deletes `organization_invitation` rows whose normalized email identifies the erased user, before the request is closed.
+
+Organization erasure additionally deletes the organization-scope `key_envelope`, crypto-shredding organization-owned encrypted values (§3.3), before the `organization` row and its owned data are removed.
 
 ## 4. Assets and domain verification
 
@@ -805,7 +836,7 @@ erDiagram
 3. `asset.asset_type` is restricted to `domain` in v4.0.
 4. A DomainVerification covers an intrusive target only when a `domain_verification` row exists for the asset and its `verified_scope` covers that target.
 5. Domain re-verification occurs before an intrusive ScanTask is queued. The outcome is recorded in `domain_verification`, `domain_verification_challenge`, and `audit_event`, not in a separate authorization table.
-6. Current MFA assurance is read from the identity-provider session or token. It is not persisted as a User boolean.
+6. Current MFA assurance is read from the platform session (`user_session.mfa_verified_at`, §3.6, within the configured max age) — the platform is its own identity provider in v4.0 (Non-functional v0.11). It is still never persisted as a User boolean; when SSO federation lands, the IdP token's `amr`/`auth_time` populate the same session stamp at login.
 7. A ScanJob containing an intrusive ScanTask requires two current StatementResponse rows bound to that ScanJob: an attestation for `scan_target_permission` and an acceptance for `intrusive_scan_risk_liability`.
 8. All v4.0 domain ScanTasks are non-intrusive. File ScanTasks use `classification = not_applicable`.
 9. Guest ScanJobs are not shown in persistent history unless they are claimed after registration.
@@ -818,7 +849,7 @@ erDiagram
 
 ## 14. Row-level check constraints
 
-Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Where §3.5 erasure nulls an attribution column, the pairing is one-way instead: the actor implies the time, never the reverse, so erasing a user cannot violate the constraint. Array emptiness is tested with `cardinality`, never `array_length`: `array_length` of an empty array is null, and a CHECK that evaluates to null passes. Cross-row and cross-table rules stay in §13.
+Every constraint below enforces an invariant already stated in the table sections, and each is expressible as a PostgreSQL `CHECK` on one row, so the DDL carries it instead of application discipline. Between two null tests, `=` reads "exactly when". Where §3.9 erasure nulls an attribution column, the pairing is one-way instead: the actor implies the time, never the reverse, so erasing a user cannot violate the constraint. Array emptiness is tested with `cardinality`, never `array_length`: `array_length` of an empty array is null, and a CHECK that evaluates to null passes. Cross-row and cross-table rules stay in §13.
 
 | Table                           | Constraint                                                                                                                         | Enforces                                                              |
 |---------------------------------|------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------|

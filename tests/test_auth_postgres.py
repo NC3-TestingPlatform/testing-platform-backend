@@ -14,7 +14,10 @@ passwords unless `APP_DATABASE_URL` / `AUTH_DATABASE_URL` say otherwise.
 """
 
 import os
+import threading
+import time
 import uuid
+from base64 import b32decode
 from collections.abc import Iterator
 from typing import Any
 
@@ -27,6 +30,7 @@ from uuid6 import uuid7
 
 from nc3_testing_platform.core import api_db, rls
 from nc3_testing_platform.core.settings import settings
+from nc3_testing_platform.domains.auth import repository, totp
 from nc3_testing_platform.main import app
 
 pytestmark = pytest.mark.postgres
@@ -239,7 +243,7 @@ def test_nc3_app_has_no_privilege_on_auth_tables(
     app_role_session: Session,
 ) -> None:
     """SELECT on the credential tables is refused at the grant layer."""
-    for table in ("user_credential", "user_session"):
+    for table in ("user_credential", "user_session", "user_mfa", "mfa_recovery_code"):
         with pytest.raises(ProgrammingError) as excinfo:
             app_role_session.execute(sa.text(f"SELECT count(*) FROM {table}"))
         assert "permission denied" in str(excinfo.value)
@@ -317,5 +321,250 @@ def test_definer_functions_have_the_hardened_shape() -> None:
                         {"role": role, "sig": signature},
                     ).scalar_one()
                     assert not granted, f"{role} can execute {signature}"
+    finally:
+        engine.dispose()
+
+
+# --- MFA (B4 / US #80) ----------------------------------------------------------
+
+
+def _totp_code(secret_base32: str, offset: int = 0) -> str:
+    """A currently valid code for an enrolled seed (real clock)."""
+    secret = b32decode(secret_base32)
+    step = totp.step_at(time.time()) + offset
+    return totp.code_at(secret, step)
+
+
+@pytest.fixture(autouse=True)
+def _roomy_ip_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module drives many auth calls per run against a real Redis.
+
+    The per-IP fixed windows (register 10/hour, login 10/minute, mfa 5/minute)
+    fill up across consecutive local runs and would flake the suite; the
+    behaviors under test here are the durable per-account controls, and the
+    IP windows have their own tests in the unit suite.
+    """
+    monkeypatch.setattr(settings, "auth_register_rate_limit", 10_000)
+    monkeypatch.setattr(settings, "auth_login_rate_limit", 10_000)
+    monkeypatch.setattr(settings, "auth_mfa_verify_rate_limit", 10_000)
+
+
+def _register_and_login(client: TestClient) -> tuple[str, uuid.UUID]:
+    email = _fresh_email()
+    registered = _register(client, email)
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+        ).status_code
+        == 200
+    )
+    return email, uuid.UUID(registered["user_id"])
+
+
+def _enroll_and_confirm(client: TestClient) -> tuple[str, list[str]]:
+    """Enroll behind the password, confirm with a live code."""
+    enrolled = client.post("/api/v1/auth/mfa/enroll", json={"password": PASSWORD})
+    assert enrolled.status_code == 201, enrolled.text
+    secret_base32 = enrolled.json()["secret_base32"]
+    confirmed = client.post(
+        "/api/v1/auth/mfa/confirm", json={"totp_code": _totp_code(secret_base32)}
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return secret_base32, confirmed.json()["recovery_codes"]
+
+
+def test_mfa_end_to_end_flow(client: TestClient) -> None:
+    """Enroll → confirm → pending login → recovery verify → disable, live."""
+    email, _ = _register_and_login(client)
+
+    # Enrollment is password-gated: a session alone does not plant a factor.
+    refused = client.post(
+        "/api/v1/auth/mfa/enroll", json={"password": "wrong horse battery"}
+    )
+    assert refused.status_code == 403
+    _, codes = _enroll_and_confirm(client)
+    assert len(codes) == 10
+
+    # The confirming session is assured on the spot: the gated regeneration
+    # passes and supersedes the first set.
+    regenerated = client.post(
+        "/api/v1/auth/mfa/recovery-codes", json={"password": PASSWORD}
+    )
+    assert regenerated.status_code == 200, regenerated.text
+    codes = regenerated.json()["recovery_codes"]
+
+    # A fresh login is pending: profile withheld; non-pending operations
+    # answer the mfa-required problem type; the session view stays reachable.
+    assert client.post("/api/v1/auth/logout").status_code == 204
+    pending = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+    )
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["mfa_required"] is True
+    assert pending.json()["organization_role"] is None
+    refused = client.post(
+        "/api/v1/auth/password",
+        json={"current_password": PASSWORD, "new_password": "another horse ok"},
+    )
+    assert refused.status_code == 401
+    assert refused.json()["type"].endswith("mfa-required")
+    session_view = client.get("/api/v1/auth/session")
+    assert session_view.status_code == 200
+    assert session_view.json()["mfa_required"] is True
+
+    # A recovery code completes login exactly once and rotates the cookie.
+    verified = client.post(
+        "/api/v1/auth/mfa/verify", json={"recovery_code": codes[0]}
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["mfa_required"] is False
+    assert verified.json()["recovery_codes_remaining"] == 9
+    replay = client.post(
+        "/api/v1/auth/mfa/verify", json={"recovery_code": codes[0]}
+    )
+    assert replay.status_code == 403
+
+    # Disable soft-revokes behind password + a valid code; the session view
+    # then reports no factor.
+    disabled = client.post(
+        "/api/v1/auth/mfa/disable",
+        json={"password": PASSWORD, "recovery_code": codes[1]},
+    )
+    assert disabled.status_code == 204, disabled.text
+    after = client.get("/api/v1/auth/session")
+    assert after.status_code == 200
+    assert after.json()["mfa_enrolled"] is False
+
+
+def test_stale_assurance_demands_a_stepup(client: TestClient) -> None:
+    """An aged stamp answers mfa-stepup-required; a verify refreshes it."""
+    _, user_id = _register_and_login(client)
+    secret_base32, _ = _enroll_and_confirm(client)
+
+    # Backdate the stamp with the owner connection (deliberately outside the
+    # application policy; the dev/CI owner is a superuser). Scoped to this
+    # test's user: an unscoped predicate would also catch active, assured
+    # sessions from concurrent tests or workers sharing the database.
+    if not _OWNER_URL:
+        pytest.skip("DATABASE_URL not set")
+    engine = sa.create_engine(_OWNER_URL)
+    try:
+        with engine.begin() as connection:
+            backdated = connection.execute(
+                sa.text(
+                    "UPDATE user_session SET mfa_verified_at ="
+                    " now() - interval '1 hour'"
+                    " WHERE user_id = :user_id"
+                    " AND revoked_at IS NULL AND mfa_verified_at IS NOT NULL"
+                ),
+                {"user_id": user_id},
+            )
+            assert backdated.rowcount == 1
+    finally:
+        engine.dispose()
+
+    refused = client.post(
+        "/api/v1/auth/mfa/recovery-codes", json={"password": PASSWORD}
+    )
+    assert refused.status_code == 403
+    assert refused.json()["type"].endswith("mfa-stepup-required")
+
+    # The next time step is above the confirm step, so replay refusal passes.
+    stepped_up = client.post(
+        "/api/v1/auth/mfa/verify",
+        json={"totp_code": _totp_code(secret_base32, offset=1)},
+    )
+    assert stepped_up.status_code == 200, stepped_up.text
+    assert (
+        client.post(
+            "/api/v1/auth/mfa/recovery-codes", json={"password": PASSWORD}
+        ).status_code
+        == 200
+    )
+
+
+def test_cross_user_isolation_on_mfa_rows(client: TestClient) -> None:
+    """Under user A's RLS arm, user B's factor rows vanish."""
+    _register_and_login(client)
+    _enroll_and_confirm(client)
+    email_a = _fresh_email()
+    user_a = uuid.UUID(_register(client, email_a)["user_id"])
+    engine = sa.create_engine(_role_url("nc3_auth", "AUTH_DATABASE_URL"))
+    factory = sessionmaker(bind=engine)
+    session = factory()
+    try:
+        rls.set_user_context(session, user_a)
+        foreign = session.execute(
+            sa.text(
+                "SELECT count(*) FROM user_mfa WHERE user_id <> :own"
+            ),
+            {"own": user_a},
+        ).scalar_one()
+        assert foreign == 0
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_mfa_row_lock_serializes_concurrent_guessers(client: TestClient) -> None:
+    """`mfa_for_update` blocks a second locker until the first releases it.
+
+    Without the lock, two concurrent verify/confirm/disable requests could
+    both read `last_used_step`/`failed_count` before either writes, and
+    both pass the same check — replaying a TOTP step or escaping the
+    lockout threshold. This proves the row lock actually serializes them,
+    at the database level, independent of the request-handling code above.
+    """
+    _, user_id = _register_and_login(client)
+    _enroll_and_confirm(client)
+
+    engine = sa.create_engine(_role_url("nc3_auth", "AUTH_DATABASE_URL"))
+    factory = sessionmaker(bind=engine)
+    session_a = factory()
+    session_b = factory()
+    try:
+        rls.set_user_context(session_a, user_id)
+        rls.set_user_context(session_b, user_id)
+        assert repository.mfa_for_update(session_a, user_id) is not None
+
+        acquired = threading.Event()
+
+        def _second_locker() -> None:
+            repository.mfa_for_update(session_b, user_id)
+            acquired.set()
+
+        thread = threading.Thread(target=_second_locker)
+        thread.start()
+        # Still blocked a moment later: session_a holds the row lock.
+        assert not acquired.wait(timeout=0.3)
+        session_a.commit()  # releases the lock
+        assert acquired.wait(timeout=2), "second locker never acquired the row"
+        thread.join(timeout=2)
+    finally:
+        session_a.close()
+        session_b.close()
+        engine.dispose()
+
+
+def test_nc3_auth_holds_no_delete_on_the_auth_tables() -> None:
+    """The no-hard-delete invariant covers the MFA tables too (gate parity)."""
+    if not _OWNER_URL:
+        pytest.skip("DATABASE_URL not set")
+    engine = sa.create_engine(_OWNER_URL)
+    try:
+        with engine.connect() as connection:
+            for table in (
+                "user_credential",
+                "user_session",
+                "user_mfa",
+                "mfa_recovery_code",
+            ):
+                held = connection.execute(
+                    sa.text(
+                        "SELECT has_table_privilege('nc3_auth', :table, 'DELETE')"
+                    ),
+                    {"table": table},
+                ).scalar_one()
+                assert not held, f"nc3_auth may DELETE {table}"
     finally:
         engine.dispose()

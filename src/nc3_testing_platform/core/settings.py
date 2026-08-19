@@ -196,6 +196,19 @@ class Settings(BaseSettings):
     auth_register_rate_limit: int = Field(default=10, ge=1)
     auth_register_rate_window_seconds: int = Field(default=3600, ge=1)
 
+    # MFA policy (B4 / US #80). The verify lockout is deliberately stricter
+    # than the password lockout and escalates (doubling per consecutive
+    # lockout, capped): a 6-digit TOTP at the login numbers — 10 guesses per
+    # 15 minutes forever — would concede ~8.6% compromise odds per targeted
+    # account over 30 days.
+    auth_totp_issuer: str = "NC3 Testing Platform"
+    auth_mfa_assurance_max_age_seconds: int = Field(default=900, ge=60)
+    auth_mfa_failed_threshold: int = Field(default=5, ge=1)
+    auth_mfa_lockout_base_seconds: int = Field(default=900, ge=60)
+    auth_mfa_lockout_cap_seconds: int = Field(default=86400, ge=60)
+    auth_mfa_verify_rate_limit: int = Field(default=5, ge=1)
+    auth_mfa_verify_rate_window_seconds: int = Field(default=60, ge=1)
+
     @model_validator(mode="after")
     def _auth_settings_are_coherent(self) -> "Settings":
         """Refuse a key that is not 256-bit hex and an absolute cap under idle.
@@ -219,6 +232,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTH_SESSION_ABSOLUTE_SECONDS must be at least "
                 "AUTH_SESSION_IDLE_SECONDS."
+            )
+        if (
+            self.auth_mfa_assurance_max_age_seconds
+            > self.auth_session_absolute_seconds
+        ):
+            raise ValueError(
+                "AUTH_MFA_ASSURANCE_MAX_AGE_SECONDS must not exceed "
+                "AUTH_SESSION_ABSOLUTE_SECONDS."
+            )
+        if self.auth_mfa_lockout_cap_seconds < self.auth_mfa_lockout_base_seconds:
+            raise ValueError(
+                "AUTH_MFA_LOCKOUT_CAP_SECONDS must be at least "
+                "AUTH_MFA_LOCKOUT_BASE_SECONDS."
             )
         return self
 

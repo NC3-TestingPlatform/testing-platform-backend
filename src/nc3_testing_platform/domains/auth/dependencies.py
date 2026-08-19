@@ -66,5 +66,21 @@ async def register_rate_limit(request: Request) -> None:
     )
 
 
+async def mfa_verify_rate_limit(request: Request) -> None:
+    """Per-IP window on `POST /auth/mfa/verify`.
+
+    Tighter than the login window: the code space is six digits. The third
+    guessable auth window — part of B10's PoW/CAPTCHA escalation surface.
+    The per-account escalating lockout (`domains/auth/service`) is the
+    control that must hold; this fail-open layer only blunts single-IP runs.
+    """
+    await _consume_or_429(
+        f"auth:mfa:{_client_ip(request)}",
+        limit=settings.auth_mfa_verify_rate_limit,
+        window_seconds=settings.auth_mfa_verify_rate_window_seconds,
+    )
+
+
 LoginRateLimited = Depends(login_rate_limit)
 RegisterRateLimited = Depends(register_rate_limit)
+MfaVerifyRateLimited = Depends(mfa_verify_rate_limit)

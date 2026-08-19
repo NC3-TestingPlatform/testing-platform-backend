@@ -9,12 +9,12 @@
 - A ScanJob is always read through the canonical `/scans` resource, whether the caller is authenticated or a guest.
 - `POST /scans` selects the request schema by media type: `application/json` launches a domain scan, `multipart/form-data` launches a file scan, any other media type receives `415`.
 - Inside the JSON media type, the access state selects the variant: authenticated requests carry `asset_id`, unauthenticated requests carry `target`.
-- Seven operations accept an anonymous caller: `POST /scans`, the three guest scan reads (§2.3), `GET /statements`, `GET /invitations/{token}`, `GET /feeds/{token}`. Every other operation requires an OpenID Connect token or a platform API key and answers `401` without one. `/healthz` and `/readyz` sit outside `/api/v1`.
+- Seven operations accept an anonymous caller: `POST /scans`, the three guest scan reads (§2.3), `GET /statements`, `GET /invitations/{token}`, `GET /feeds/{token}`. Every other operation requires the platform session cookie, or — for the operations that permit it — a platform API key, and answers `401` without one. `/healthz` and `/readyz` sit outside `/api/v1`.
 - `ScanJob` and `ScanTask` state comes from the API. SSE events are advisory; when an event and a read disagree, the read is correct.
-- Errors use the RFC 9457 Problem Details envelope.
+- Errors use the RFC 9457 Problem Details envelope. Refusals a client must branch on machine-readably carry a `type` URN under `urn:nc3:testing-platform:problem:` (kebab-case slugs); everything else keeps the `about:blank` default. Registered slugs: `mfa-required` (401 — the session awaits its second factor), `mfa-enrollment-required` and `mfa-stepup-required` (403 — the operation demands current MFA assurance).
 - Some collection endpoints use cursor pagination and stable ordering. Lists order newest first, keyed on the UUIDv7 `id`; the audit log orders by (`chain_id`, `sequence_number`) (§15).
 - Shapes fixed by the generated contract are versioned by the OpenAPI document itself. Three payloads live outside the document and carry their own `schema_version`: scan results, webhook payloads, and notification `data`.
-- The identity provider owns identity, credentials, authentication methods, sessions, MFA enrollment, current assurance, and platform-administrator claims. The application owns its `app_user` projection, organization membership and role, assets, and verification state.
+- The platform is its own identity provider in v4.0 (Non-functional v0.11, decision 2026-08-12): identity, credentials, sessions, MFA enrollment (`/auth/mfa/*`, B4 / US #80), and current assurance are platform-local. The OpenID Connect scheme remains the federation seam of a later SSO phase, at which point the token's `amr`/`auth_time` populate the platform session's assurance stamp at login. Platform-administrator claims stay out-of-band in v4.0. The application also owns organization membership and role, assets, and verification state.
 
 ## 2. Scan launch and lifecycle
 
@@ -177,8 +177,8 @@ Rules:
 - `POST .../checks` sets `challenge.last_recheck_at` whether or not the record was found. A not-found result answers `200` with the challenge still in place and a `failure_code`.
 - Verification statuses are `pending`, `verified`, and `expired`. The status is computed from `verified_scope` and `challenge`, so no request has to reconcile the three of them.
 - `POST .../verification` requires current MFA assurance.
-- Current MFA assurance is read from the identity provider's session or token. An operation that requires it therefore declares only the OpenID Connect scheme: a platform API key carries no assurance.
-- Assurance is the `amr` claim carrying an MFA method, current while the authentication event is within the configured `max_age`. The platform reads `amr` rather than `acr`: `amr` values are an IANA-registered vocabulary (RFC 8176), while `acr` values are defined per identity provider, and the platform assumes no provider-specific vocabulary.
+- Current MFA assurance is read from the platform session (B4 / US #80): `user_session.mfa_verified_at` within the configured max age. An operation that requires it declares the SessionCookie scheme — a platform API key carries no assurance. Refusals carry problem type `mfa-enrollment-required` or `mfa-stepup-required` (§1); `POST /auth/mfa/verify` refreshes the stamp.
+- While this handler is a live mock the declaration is enforcement-free (`MfaAssuranceDeclared`); B6 swaps in the live gate with the real implementation. The `amr`-claim reading (RFC 8176 vocabulary, never `acr`) is deferred to the SSO federation phase, where it populates the same session stamp at login.
 - A verified domain is rechecked before an intrusive task is queued. No v4.0 test is intrusive, so nothing rechecks automatically in the MVP.
 
 ### 5.2 Feeds
@@ -342,7 +342,7 @@ POST /api/v1/api-keys/{key_id}/revoke
 - `POST /api-keys` returns the plaintext secret once. Only a lookup prefix and a hash are stored.
 - Creation accepts an optional `expires_at`. Absent means no expiry.
 - Revocation is a `POST`. The row is kept with `revoked_at` and `revocation_reason`, and revoked keys stay listed.
-- Creating or revoking a key consumes current MFA assurance, so both operations declare only the OpenID Connect scheme.
+- Creating or revoking a key consumes current MFA assurance from the platform session, so both operations declare the SessionCookie scheme (declaration-only while the handlers are mocks — the API-key story swaps in the live gate). Listing keys deliberately needs no assurance: reading metadata is not an assurance-gated act.
 - Erasing an account also revokes and deletes that user's keys.
 - `read_only` permits `GET` operations. `full_scan` is additionally required to launch a scan, which is recorded with `source = api`.
 

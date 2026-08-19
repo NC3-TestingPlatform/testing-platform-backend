@@ -14,7 +14,7 @@ from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     NO_STORE_HEADERS,
     CredentialRequired,
-    OidcRequired,
+    MfaAssuranceDeclared,
 )
 from nc3_testing_platform.domains.assets import examples
 from nc3_testing_platform.domains.assets.schemas import (
@@ -134,20 +134,24 @@ async def get_verification(asset_id: ResourceId) -> DomainVerification:
     status_code=status.HTTP_201_CREATED,
     summary="Start a verification challenge",
     responses=problem_responses(401, 403, 404, 409, 422),
-    dependencies=[OidcRequired],
+    dependencies=[MfaAssuranceDeclared],
 )
 async def create_verification(
     asset_id: ResourceId, body: VerificationCreate
 ) -> DomainVerification:
     """Issue a challenge at the requested coverage.
 
-    Requires current MFA assurance, read from the OIDC token rather than from any
-    stored flag — proving control of a domain is what later authorizes scanning it.
+    Requires current MFA assurance, read from the platform session rather
+    than from any stored User flag — proving control of a domain is what
+    later authorizes scanning it.
 
     On an already-verified asset the response carries both the standing proof and
     the new challenge, so coverage in force is never withdrawn while ownership is
     re-proven.
     """
+    # The gate is declaration-only while this handler is a mock: a later
+    # story swaps in the live `MfaAssuranceRequired` when the handler does
+    # real work. The contract text above states only the eventual behavior.
     return examples.sample_reverification()
 
 

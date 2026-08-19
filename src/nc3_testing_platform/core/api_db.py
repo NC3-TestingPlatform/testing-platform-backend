@@ -87,7 +87,11 @@ def app_session() -> Iterator[Session]:
         engine = get_app_engine()
         with _init_lock:
             if _app_factory is None:
-                _app_factory = sessionmaker(bind=engine)
+                # No expire-on-commit: services commit before returning when
+                # the response hands the client actionable state (US #80), and
+                # a post-commit attribute refresh would re-query outside the
+                # request's SET LOCAL RLS context and find nothing.
+                _app_factory = sessionmaker(bind=engine, expire_on_commit=False)
     yield from _unit_of_work(_app_factory)
 
 
@@ -103,7 +107,8 @@ def auth_session() -> Iterator[Session]:
         engine = get_auth_engine()
         with _init_lock:
             if _auth_factory is None:
-                _auth_factory = sessionmaker(bind=engine)
+                # Same rationale as app_session's factory.
+                _auth_factory = sessionmaker(bind=engine, expire_on_commit=False)
     yield from _unit_of_work(_auth_factory)
 
 
