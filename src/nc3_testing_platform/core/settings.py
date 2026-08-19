@@ -107,6 +107,17 @@ class Settings(BaseSettings):
     verification_record_prefix: str = "nc3"
     retention_extension_days: int = Field(default=365, ge=1, le=36500)
 
+    # Challenge anti-abuse (B6a / US #82). Enforced by
+    # `domains/assets/dependencies.challenge_rate_limit` on both
+    # challenge-writing operations, keyed per (organization, asset).
+    #
+    # Bounds a cheap operation — one upsert, no network — and bounds it per
+    # organization, which bounds one account rather than one attacker:
+    # registration is free and instant. The load-bearing global cap belongs with
+    # the DNS check (B6b / US #263), where the expensive operation is.
+    verification_challenge_rate_limit: int = Field(default=10, ge=1)
+    verification_challenge_rate_window_seconds: int = Field(default=300, ge=1)
+
     # Service endpoints (worker/app.py, worker/tasks.py; Redis primitives in
     # core/redis_utils.py once task #157 lands). Defaults match the compose
     # stack's loopback ports so a fresh clone works without a .env.

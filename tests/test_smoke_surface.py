@@ -53,6 +53,11 @@ REALIZED_OPERATIONS = {
     ("post", "/api/v1/auth/mfa/verify"),
     ("post", "/api/v1/auth/mfa/recovery-codes"),
     ("post", "/api/v1/auth/mfa/disable"),
+    # Domain verification, realized against the database (B6a / US #82). The
+    # DNS check stays a mock until B6b, so it keeps its Case above.
+    ("get", "/api/v1/assets/{asset_id}/verification"),
+    ("post", "/api/v1/assets/{asset_id}/verification"),
+    ("post", "/api/v1/assets/{asset_id}/verification/token"),
 }
 
 _CLAIM_TOKEN = "9xK2mQ7pL4vR8nT1jH5gF3dS6aW0zYbUcElOnAiKrXs"
@@ -138,14 +143,7 @@ CASES: tuple[Case, ...] = (
     ),
     Case("delete", "/api/v1/assets/{asset_id}"),
     Case("get", "/api/v1/assets/{asset_id}/scans"),
-    Case("get", "/api/v1/assets/{asset_id}/verification"),
-    Case(
-        "post",
-        "/api/v1/assets/{asset_id}/verification",
-        json_body={"requested_scope": "zone"},
-    ),
     Case("post", "/api/v1/assets/{asset_id}/verification/checks"),
-    Case("post", "/api/v1/assets/{asset_id}/verification/token"),
     Case("get", "/api/v1/assets/{asset_id}/feeds"),
     Case("post", "/api/v1/assets/{asset_id}/feeds", json_body={"format": "atom"}),
     Case("post", "/api/v1/assets/{asset_id}/feeds/{feed_id}/revoke"),

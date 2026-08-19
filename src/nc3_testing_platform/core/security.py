@@ -24,6 +24,8 @@ contract: the BFF calls this API as an ordinary client.
 """
 
 import hashlib
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
@@ -34,19 +36,23 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyCookie, APIKeyHeader, OpenIdConnect
 from sqlalchemy.orm import Session
 
-from nc3_testing_platform.core import rls
-from nc3_testing_platform.core.api_db import AuthDbSession
+from nc3_testing_platform.core import redis_utils, rls
+from nc3_testing_platform.core.api_db import AppDbSession, AuthDbSession
+from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import (
     PROBLEM_MEDIA_TYPE,
     PROBLEM_MFA_ENROLLMENT_REQUIRED,
     PROBLEM_MFA_REQUIRED,
     PROBLEM_MFA_STEPUP_REQUIRED,
+    PROBLEM_ORG_ROLE_REQUIRED,
     ProblemDetail,
     ProblemException,
 )
 from nc3_testing_platform.core.settings import settings
 
 # Re-exported name; the environment read lives on the settings module.
+logger = logging.getLogger("nc3_testing_platform.core.security")
+
 OIDC_DISCOVERY_URL = settings.oidc_discovery_url
 
 oidc = OpenIdConnect(
@@ -122,6 +128,12 @@ class AuthenticatedSession:
     mfa_enrolled: bool = False
     mfa_verified_at: datetime | None = None
     observed_at: datetime | None = None
+    # Organization role (B6a): read in-policy from `app_user` alongside the MFA
+    # state, never from the definer bootstrap. The default is deliberately the
+    # least-privileged member — a construction that forgets it must fail a
+    # `require_org_role(ORGANIZATION_ADMIN)` gate, not pass it — and it keeps
+    # pre-B6a constructions (tests, fakes) valid, as the MFA defaults above do.
+    organization_role: OrganizationRole = OrganizationRole.MEMBER
 
 
 # The pre-context lookup (IDR-012): runs as the nc3_auth_definer-owned
@@ -146,17 +158,35 @@ def _session_refused(clear_cookie: bool) -> HTTPException:
     )
 
 
-# In-policy MFA state, read after the user arm opens: assurance lives on the
-# session row and enrollment is derived from `user_mfa` (§13.6). Deliberately
-# NOT part of the definer bootstrap, whose read surface stays at B3's three
-# tables — the definer owner never reaches the seed table. Raw SQL, not the
-# ORM model — core must not import `domains/auth`.
+# In-policy session state, read after the user arm opens: MFA assurance lives
+# on the session row, enrollment is derived from `user_mfa` (§13.6), and the
+# organization role from `app_user` (B6a). Deliberately NOT part of the definer
+# bootstrap, whose read surface stays at B3's three tables — the definer owner
+# never reaches the seed table. Raw SQL, not the ORM model — core must not
+# import `domains/auth`.
+#
+# The `app_user` join is reachable here because its `tenant_rows` policy carries
+# a user arm (`id = app.current_user`), which `set_user_context` above has just
+# opened; `nc3_auth` holds SELECT on the table (B3 grants). One extra column, no
+# extra round trip, and no reason to touch the definer function.
+#
+# Note the policy's *other* arm is `organization_id = app.current_org`, which
+# would open same-org visibility of every member's row. It cannot match here
+# because `set_user_context` clears the org GUC to '' and `NULLIF(...)::uuid`
+# makes that NULL. The read is confined to the caller's own row by the choice
+# of context helper, not by the query — do not move this under an org context.
+#
+# `.one()` is safe against a missing `app_user`: the FK carries ON DELETE
+# CASCADE, so a session row cannot outlive its user. If that ever changes, this
+# becomes a 500 on an auth path.
 _MFA_STATE = sa.text(
     "SELECT s.mfa_verified_at,"
     " EXISTS (SELECT 1 FROM user_mfa m"
     " WHERE m.user_id = :user_id AND m.confirmed_at IS NOT NULL)"
-    " AS mfa_enrolled"
-    " FROM user_session s WHERE s.id = :session_id"
+    " AS mfa_enrolled,"
+    " u.organization_role"
+    " FROM user_session s JOIN app_user u ON u.id = s.user_id"
+    " WHERE s.id = :session_id"
 )
 
 
@@ -211,6 +241,11 @@ def _resolve_session(
         mfa_enrolled=bool(state.mfa_enrolled),
         mfa_verified_at=state.mfa_verified_at,
         observed_at=row.observed_at,
+        # Raw SQL returns the PostgreSQL enum as a string; coerce it here so
+        # every gate downstream compares enum to enum. A bare string would
+        # compare unequal to every `OrganizationRole` member and silently deny
+        # every role gate.
+        organization_role=OrganizationRole(state.organization_role),
     )
 
 
@@ -242,6 +277,34 @@ CurrentSession = Annotated[AuthenticatedSession, Depends(require_session)]
 PendingMfaSession = Annotated[
     AuthenticatedSession, Depends(require_pending_or_current_session)
 ]
+
+
+def org_scoped_app_session(current: CurrentSession, db: AppDbSession) -> Session:
+    """The tenant session (``nc3_app``) with the caller's org context asserted.
+
+    Authentication resolves on the `nc3_auth` connection and opens only the
+    *user* arm there; tenant tables live behind the org arm on a different
+    connection, where nothing had been asserting `app.current_org`. Every
+    org-scoped operation takes this instead of :data:`AppDbSession` — reads
+    included, since an unasserted context yields an empty result rather than
+    an error and would surface as a spurious `404`.
+
+    The standing rule this establishes: **every commit on this session must be
+    followed by re-asserting the context**, because ``SET LOCAL`` dies with the
+    transaction and the policies then silently match nothing. Services here do
+    commit mid-request on purpose (`domains/auth/service` sets the precedent,
+    and its routers re-assert afterwards) — the invariant is re-assertion, not
+    abstinence.
+
+    Note the two connections are independent: this one and the `nc3_auth`
+    session commit separately in dependency-teardown order, so no invariant may
+    span them, and each authenticated request holds both for its duration.
+    """
+    rls.set_org_context(db, current.organization_id, current.user_id)
+    return db
+
+
+OrgScopedAppSession = Annotated[Session, Depends(org_scoped_app_session)]
 
 
 def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
@@ -312,6 +375,61 @@ def declare_mfa_assurance(token: SessionAuth) -> None:
 
 # Attach as `dependencies=[MfaAssuranceDeclared]` on a mock operation.
 MfaAssuranceDeclared = Depends(declare_mfa_assurance)
+
+
+def require_org_role(
+    role: OrganizationRole,
+) -> Callable[[AuthenticatedSession], AuthenticatedSession]:
+    """Build a dependency demanding exactly `role` within the caller's org.
+
+    Exact match, not a hierarchy: v4.0 has two roles and no ordering between
+    them (`member`, `organization_admin`), so a ranking would be invented
+    rather than modelled. Fine-grained permissions were deliberately left room
+    for when the single-admin restriction was withdrawn (IDR-016); whoever
+    adds them decides the ordering then.
+
+    The authorization half of what :func:`require_current_mfa_assurance`
+    deliberately leaves alone: that gate proves *who* is calling, this one
+    proves *what they may do* inside their organization. Parameterized rather
+    than a one-off admin check so the next role-gated operation reuses it.
+
+    What this gate is, and is not: registration provisions the registrant as
+    `organization_admin` of their own workspace organization (IDR-016), so an
+    attacker who just signed up is an admin of their own tenant from the first
+    request. This is **insider governance** — it stops a non-admin member of a
+    real, multi-person organization from taking an admin-only action — and it
+    is **not** resistance to anonymous abuse. The controls that face an
+    external attacker are the DNS proof itself, the platform-wide claim
+    uniqueness constraint, and rate limiting. Do not cite this gate as
+    evidence that an operation is hard to reach.
+    """
+
+    def dependency(current: CurrentSession) -> AuthenticatedSession:
+        # `!=` rather than `is not`: `OrganizationRole` is a StrEnum, so this is
+        # equally strict while not depending on member identity surviving every
+        # import path. Both directions fail closed — a bare string compares
+        # unequal and is refused — but equality needs no such assumption.
+        if current.organization_role != role:
+            raise ProblemException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This operation requires the "
+                    f"{role.value} role in your organization."
+                ),
+                problem_type=PROBLEM_ORG_ROLE_REQUIRED,
+            )
+        return current
+
+    return dependency
+
+
+# Attach as `dependencies=[OrgAdminRequired]`, or take the parameter form
+# `CurrentOrgAdminSession` when the handler needs the identity.
+OrgAdminRequired = Depends(require_org_role(OrganizationRole.ORGANIZATION_ADMIN))
+CurrentOrgAdminSession = Annotated[
+    AuthenticatedSession,
+    Depends(require_org_role(OrganizationRole.ORGANIZATION_ADMIN)),
+]
 
 
 def verify_token(token: str) -> dict[str, object]:
@@ -400,6 +518,49 @@ RATE_LIMIT_HEADERS: dict[str, dict] = {
         "description": "Seconds until the quota resets. Sent with `429`.",
     },
 }
+
+
+async def enforce_rate_limit(key: str, *, limit: int, window_seconds: int) -> None:
+    """Consume one unit of a fixed window, or refuse with `429` + the headers.
+
+    The enforcement half of :func:`rate_limited`, which only declares the
+    contract. Lives in core because more than one domain needs it and two
+    divergent implementations of a **fail-open** control is the kind of drift
+    nobody notices until the day it matters.
+
+    Deliberately fail-open: an unreachable Redis lets the request through with a
+    logged warning. Availability of the underlying operation beats one
+    rate-limit layer, and the durable per-account controls stand on their own.
+    That is also why this must never be the only bound on an expensive
+    operation — it disappears exactly when the platform is already degraded.
+
+    `domains/auth/dependencies.py` predates this and still carries its own
+    copy; converge it when that module is next touched, rather than changing a
+    live auth path from an unrelated story.
+    """
+    try:
+        decision = await redis_utils.consume(
+            key, limit=limit, window_seconds=window_seconds
+        )
+    except Exception:
+        logger.warning(
+            "rate-limit backend unavailable; failing open for %s", key, exc_info=True
+        )
+        return
+    if decision.allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many requests; retry after the window resets.",
+        headers={
+            "RateLimit": (
+                f"limit={decision.limit}, remaining={decision.remaining}, "
+                f"reset={decision.reset_seconds}"
+            ),
+            "RateLimit-Policy": f"{decision.limit};w={window_seconds}",
+            "Retry-After": str(decision.reset_seconds),
+        },
+    )
 
 
 def rate_limited() -> dict[int | str, dict]:

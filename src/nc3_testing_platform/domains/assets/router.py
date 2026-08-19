@@ -5,18 +5,23 @@ the authenticated asset router, and a separate unauthenticated one for public fe
 delivery, which is authorized by a token in the path rather than by a caller.
 """
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, HTTPException, Response, status
 
-from nc3_testing_platform.core.enums import VerificationStatus
+from nc3_testing_platform.core import rls
 from nc3_testing_platform.core.errors import problem_responses
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
     NO_STORE_HEADERS,
     CredentialRequired,
-    MfaAssuranceDeclared,
+    CurrentSession,
+    MfaAssuranceRequired,
+    OrgAdminRequired,
+    OrgScopedAppSession,
+    rate_limited,
 )
-from nc3_testing_platform.domains.assets import examples
+from nc3_testing_platform.domains.assets import examples, service
+from nc3_testing_platform.domains.assets.dependencies import ChallengeRateLimited
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
     AssetCreate,
@@ -25,6 +30,7 @@ from nc3_testing_platform.domains.assets.schemas import (
     AssetFeedCreated,
     AssetUpdate,
     DomainVerification,
+    VerificationChallenge,
     VerificationCreate,
 )
 from nc3_testing_platform.domains.scans import examples as scan_examples
@@ -39,6 +45,73 @@ router = APIRouter(
 # the path is the entire authorization, which is what makes a feed subscribable by
 # a reader that cannot hold credentials.
 public_feed_router = APIRouter(prefix="/feeds", tags=["assets"])
+
+
+def _asset_not_found() -> HTTPException:
+    # One answer for absent and for another organization's: under FORCE RLS the
+    # row is invisible rather than refused, and distinguishing them would be a
+    # cross-tenant existence oracle even if the service could.
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="No such asset."
+    )
+
+
+def _verification_not_started() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Verification was never started for this asset.",
+    )
+
+
+def _not_a_domain() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="DNS-TXT verification applies to domain assets only.",
+    )
+
+
+def _already_verified() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "The asset is already verified; replacing its token would discard a "
+            "working proof. Start a new challenge to re-prove or widen scope."
+        ),
+    )
+
+
+def _as_response(
+    asset_id: ResourceId, state: service.VerificationState
+) -> DomainVerification:
+    """Map the service state onto the response schema, adding nothing.
+
+    The status is computed in the service against the database clock; the
+    challenge is echoed in full because the token is the whole point of the
+    response — the caller cannot publish what it cannot read.
+    """
+    challenge = state.challenge
+    return DomainVerification(
+        asset_id=asset_id,
+        status=state.status,
+        verified_scope=state.proof.verified_scope if state.proof else None,
+        verified_at=state.proof.verified_at if state.proof else None,
+        challenge=(
+            None
+            if challenge is None
+            else VerificationChallenge(
+                id=challenge.id,
+                requested_scope=challenge.requested_scope,
+                record_type=challenge.record_type,
+                record_name=challenge.record_name,
+                verification_token=challenge.verification_token,
+                token_expires_at=challenge.token_expires_at,
+                requested_by_user_id=challenge.requested_by_user_id,
+                requested_at=challenge.requested_at,
+                last_recheck_at=challenge.last_recheck_at,
+                failure_code=challenge.failure_code,
+            )
+        ),
+    )
 
 
 @router.get(
@@ -121,38 +194,82 @@ async def list_asset_scans(asset_id: ResourceId, page: CursorPage) -> Page[ScanJ
 @router.get(
     "/{asset_id}/verification",
     summary="Get verification state",
-    responses=problem_responses(401, 404),
-    dependencies=[CredentialRequired],
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 404),
+    },
 )
-async def get_verification(asset_id: ResourceId) -> DomainVerification:
-    """Current ownership-verification state. `404` when none was ever started."""
-    return examples.sample_verification()
+def get_verification(
+    asset_id: ResourceId, response: Response, db: OrgScopedAppSession
+) -> DomainVerification:
+    """Current ownership-verification state. `404` when none was ever started.
+
+    Takes the org-scoped session even though it only reads: without the context
+    the policy matches nothing and the read would answer `404` for rows that do
+    exist, which is indistinguishable from the genuine not-started case.
+    """
+    try:
+        state = service.read_state(db, asset_id)
+    except service.AssetNotFoundError:
+        raise _asset_not_found() from None
+    except service.VerificationNotStartedError:
+        raise _verification_not_started() from None
+    # The body carries the challenge token, which the caller is about to publish
+    # in DNS. Same treatment as the feed token below: no shared proxy or browser
+    # disk cache should keep it for a back-button view on a shared machine.
+    response.headers["Cache-Control"] = "no-store"
+    return _as_response(asset_id, state)
 
 
 @router.post(
     "/{asset_id}/verification",
     status_code=status.HTTP_201_CREATED,
     summary="Start a verification challenge",
-    responses=problem_responses(401, 403, 404, 409, 422),
-    dependencies=[MfaAssuranceDeclared],
+    responses={
+        201: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 404, 409, 422),
+        **rate_limited(),
+    },
+    dependencies=[OrgAdminRequired, MfaAssuranceRequired, ChallengeRateLimited],
 )
-async def create_verification(
-    asset_id: ResourceId, body: VerificationCreate
+def create_verification(
+    asset_id: ResourceId,
+    body: VerificationCreate,
+    current: CurrentSession,
+    response: Response,
+    db: OrgScopedAppSession,
 ) -> DomainVerification:
     """Issue a challenge at the requested coverage.
 
-    Requires current MFA assurance, read from the platform session rather
-    than from any stored User flag — proving control of a domain is what
-    later authorizes scanning it.
+    Requires current MFA assurance, read from the platform session rather than
+    from any stored User flag — proving control of a domain is what later
+    authorizes scanning it. Also `organization_admin`: a successful
+    verification names the organization and locks the domain platform-wide
+    (IDR-016), so it is an admin act, while asset creation and non-intrusive
+    scanning stay member-level.
 
-    On an already-verified asset the response carries both the standing proof and
-    the new challenge, so coverage in force is never withdrawn while ownership is
-    re-proven.
+    On an already-verified asset the response carries both the standing proof
+    and the new challenge, so coverage in force is never withdrawn while
+    ownership is re-proven. Creating a challenge replaces any challenge the
+    asset already had, and is idempotent under concurrency.
     """
-    # The gate is declaration-only while this handler is a mock: a later
-    # story swaps in the live `MfaAssuranceRequired` when the handler does
-    # real work. The contract text above states only the eventual behavior.
-    return examples.sample_reverification()
+    try:
+        state = service.start_challenge(
+            db,
+            asset_id=asset_id,
+            organization_id=current.organization_id,
+            user_id=current.user_id,
+            requested_scope=body.requested_scope,
+        )
+    except service.AssetNotFoundError:
+        raise _asset_not_found() from None
+    except service.NotADomainAssetError:
+        raise _not_a_domain() from None
+    # The service committed, which drops SET LOCAL; re-assert before anything
+    # else on this session reads (core/security.org_scoped_app_session).
+    rls.set_org_context(db, current.organization_id, current.user_id)
+    response.headers["Cache-Control"] = "no-store"
+    return _as_response(asset_id, state)
 
 
 @router.post(
@@ -178,22 +295,49 @@ async def check_verification(asset_id: ResourceId) -> DomainVerification:
 @router.post(
     "/{asset_id}/verification/token",
     summary="Replace the verification token",
-    responses=problem_responses(401, 403, 404, 409),
-    dependencies=[CredentialRequired],
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 404, 409),
+        **rate_limited(),
+    },
+    dependencies=[OrgAdminRequired, MfaAssuranceRequired, ChallengeRateLimited],
 )
-async def regenerate_verification_token(asset_id: ResourceId) -> DomainVerification:
+def regenerate_verification_token(
+    asset_id: ResourceId,
+    current: CurrentSession,
+    response: Response,
+    db: OrgScopedAppSession,
+) -> DomainVerification:
     """Issue a fresh token and expiry for a stalled challenge.
 
     Answers `409` when the asset is already verified. Regeneration exists for a
     challenge that expired or whose token was lost, and a verified asset has
-    neither — replacing its token would discard a working proof and make the user
-    edit DNS again to get back where they started.
+    neither — replacing its token would discard a working proof and make the
+    user edit DNS to get back where they started.
 
-    To re-prove ownership, or to widen the scope, start a new challenge with
-    `POST .../verification`. The existing `verified_scope` holds until that
-    challenge succeeds, so nothing depending on the current proof breaks meanwhile.
+    The scope is carried over, not re-taken: changing coverage while replacing a
+    token would be a privilege change disguised as a retry. To re-prove
+    ownership, or to widen the scope, start a new challenge with
+    `POST .../verification`, where the scope is explicit. The existing
+    `verified_scope` holds until that challenge succeeds, so nothing depending
+    on the current proof breaks meanwhile.
     """
-    return examples.sample_verification(status=VerificationStatus.PENDING)
+    try:
+        state = service.regenerate_token(
+            db,
+            asset_id=asset_id,
+            organization_id=current.organization_id,
+            user_id=current.user_id,
+        )
+    except service.AssetNotFoundError:
+        raise _asset_not_found() from None
+    except service.AlreadyVerifiedError:
+        raise _already_verified() from None
+    except service.VerificationNotStartedError:
+        raise _verification_not_started() from None
+    rls.set_org_context(db, current.organization_id, current.user_id)
+    response.headers["Cache-Control"] = "no-store"
+    return _as_response(asset_id, state)
 
 
 @router.get(

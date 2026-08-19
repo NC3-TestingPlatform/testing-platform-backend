@@ -35,6 +35,7 @@ def problem_type_uri(slug: str) -> str:
 PROBLEM_MFA_REQUIRED = problem_type_uri("mfa-required")
 PROBLEM_MFA_ENROLLMENT_REQUIRED = problem_type_uri("mfa-enrollment-required")
 PROBLEM_MFA_STEPUP_REQUIRED = problem_type_uri("mfa-stepup-required")
+PROBLEM_ORG_ROLE_REQUIRED = problem_type_uri("org-role-required")
 
 _PROBLEM_REF = "#/components/schemas/ProblemDetail"
 _VALIDATION_REF = "#/components/schemas/HTTPValidationError"

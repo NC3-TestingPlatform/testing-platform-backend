@@ -598,7 +598,15 @@ def test_assurance_gate_passes_fresh_assurance() -> None:
 
 
 def _session_db(state: SimpleNamespace) -> MagicMock:
-    """A db mock: the bootstrap row first, then the in-policy MFA state."""
+    """A db mock: the bootstrap row first, then the in-policy session state.
+
+    The in-policy read carries the organization role alongside the MFA state
+    (B6a), so it is defaulted here rather than at every call site; a test that
+    cares about the role passes its own.
+    """
+    state = SimpleNamespace(
+        **({"organization_role": OrganizationRole.MEMBER.value} | vars(state))
+    )
     row = SimpleNamespace(
         session_id=SESSION_ID,
         user_id=USER_ID,

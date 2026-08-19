@@ -61,6 +61,14 @@ its transaction:
   The claim transition happens *through* this arm (the arm keys on the
   immutable `scan_job.id`), so no NULL→org policy exists.
 
+  The organization role the B6a authorization gate compares against is read
+  through this policy's **owner arm**, on the `nc3_auth` connection, in the same
+  in-policy query that reads MFA state (`core/security.py`). `set_user_context`
+  clears the org GUC, so the same-org arm cannot match there and the read is
+  confined to the caller's own row. That confinement is a property of *which
+  context helper the call site uses*, not of the query — moving that read under
+  an org context would legitimately widen it to every member's role.
+
 `key_envelope` follows its `scope` column across all three arms (IDR-017). A
 missing or cleared GUC is NULL/'' and every predicate denies with an **empty
 result, never an error**. New tables are deny-until-classified: the RLS
