@@ -143,3 +143,106 @@ def test_worker_limits_follow_settings() -> None:
         celery_app.conf.worker_max_tasks_per_child
         == settings.celery_max_tasks_per_child
     )
+
+
+# --- DNS resolver configuration (B6b / US #263) -----------------------------
+#
+# The resolver list is the platform's first structured setting, so these pin
+# both its validation and the one convention it cannot honour.
+
+_DNSPUB = '[{"address":"158.64.1.29","transport":"dot","port":853,'
+_DNSPUB += '"tls_hostname":"dnspub.restena.lu"}]'
+
+
+def test_no_resolver_is_configured_by_default(clean_env: pytest.MonkeyPatch) -> None:
+    """An empty list is legal at import: refusing here would kill the whole API.
+
+    `settings` is built when the module is imported, and both the test suite and
+    `make dev` run with no environment, so an unconfigured deployment must lose
+    the one operation that needs a resolver rather than failing to start.
+    """
+    loaded = load_settings()
+    assert loaded.verification_resolvers == []
+    assert loaded.verification_resolver_quorum == 1
+
+
+def test_resolvers_parse_from_the_environment(clean_env: pytest.MonkeyPatch) -> None:
+    """The JSON list reaches the typed model with its transport intact."""
+    clean_env.setenv("VERIFICATION_RESOLVERS", _DNSPUB)
+    resolver = load_settings().verification_resolvers[0]
+    assert (resolver.address, resolver.port) == ("158.64.1.29", 853)
+    assert resolver.transport == "dot"
+    assert resolver.tls_hostname == "dnspub.restena.lu"
+
+
+def test_a_dot_resolver_without_its_hostname_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """DoT without a verified hostname is encryption with the attacker still there."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS", '[{"address":"158.64.1.29","transport":"dot"}]'
+    )
+    with pytest.raises(RuntimeError, match="tls_hostname"):
+        load_settings()
+
+
+def test_a_doh_resolver_without_its_url_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """A DoH entry with no URL has no endpoint to authenticate against."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS",
+        '[{"address":"185.194.94.71","transport":"doh","port":443}]',
+    )
+    with pytest.raises(RuntimeError, match="doh_url"):
+        load_settings()
+
+
+def test_a_quorum_no_configuration_can_satisfy_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """Corroboration across two resolvers cannot be met by one."""
+    clean_env.setenv("VERIFICATION_RESOLVERS", _DNSPUB)
+    clean_env.setenv("VERIFICATION_RESOLVER_QUORUM", "2")
+    with pytest.raises(RuntimeError, match="VERIFICATION_RESOLVER_QUORUM"):
+        load_settings()
+
+
+def test_a_bulkhead_wider_than_the_connection_pool_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """A check that outlives its connection starves the whole `nc3_app` role.
+
+    `core/api_db` builds the engine on SQLAlchemy's defaults, so the ceiling is
+    `pool_size=5` plus `max_overflow=10`.
+    """
+    clean_env.setenv("VERIFICATION_DNS_MAX_CONCURRENT_QUERIES", "15")
+    with pytest.raises(RuntimeError, match="connection-pool ceiling"):
+        load_settings()
+
+
+def test_a_total_deadline_under_one_query_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """A budget that cannot fit one query would fail every check on the deadline."""
+    clean_env.setenv("VERIFICATION_QUERY_TIMEOUT_SECONDS", "10")
+    clean_env.setenv("VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS", "5")
+    with pytest.raises(RuntimeError, match="VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS"):
+        load_settings()
+
+
+def test_the_resolver_list_is_environment_only(
+    clean_env: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`VERIFICATION_RESOLVERS_FILE` does not work, and that is pinned deliberately.
+
+    `_FileIndirectionSource` reports every field as non-complex and passes the
+    file's text through unchanged, so a JSON list arrives as a string and fails
+    validation. Every scalar variable still honours `_FILE`; this one cannot, and
+    a silent half-working indirection would be worse than a refusal.
+    """
+    pointer = tmp_path / "resolvers.json"
+    pointer.write_text(_DNSPUB, encoding="utf-8")
+    clean_env.setenv("VERIFICATION_RESOLVERS_FILE", str(pointer))
+    with pytest.raises(RuntimeError, match="VERIFICATION_RESOLVERS"):
+        load_settings()
