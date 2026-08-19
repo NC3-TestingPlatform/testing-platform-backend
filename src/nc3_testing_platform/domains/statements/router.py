@@ -44,7 +44,7 @@ async def list_statements() -> list[Statement]:
             version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
             content_hash="sha256:5849ebd2b3c3eb22985f1507483fa21e9a364ddd72e72a7a6f00034438fb1515",
-            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/fd0926985b6343c040a92a91c00ef3e63d804518/docs/legal/terms-of-service-2026-08-18.md",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/ee0d2e072df274de45aaa076c327c2c91663e7c3/docs/legal/terms-of-service-2026-08-18.md",
             effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(
@@ -53,7 +53,7 @@ async def list_statements() -> list[Statement]:
             version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
             content_hash="sha256:4035948413e80ebea43cae2a53f956ea26939838f3ec0c2064a554cf9c0d28b9",
-            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/fd0926985b6343c040a92a91c00ef3e63d804518/docs/legal/privacy-statement-2026-08-18.md",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/ee0d2e072df274de45aaa076c327c2c91663e7c3/docs/legal/privacy-statement-2026-08-18.md",
             effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(
