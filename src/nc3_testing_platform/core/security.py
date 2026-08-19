@@ -36,7 +36,7 @@ from fastapi.security import APIKeyCookie, APIKeyHeader, OpenIdConnect
 from sqlalchemy.orm import Session
 
 from nc3_testing_platform.core import rls
-from nc3_testing_platform.core.api_db import AuthDbSession
+from nc3_testing_platform.core.api_db import AppDbSession, AuthDbSession
 from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import (
     PROBLEM_MEDIA_TYPE,
@@ -264,6 +264,34 @@ CurrentSession = Annotated[AuthenticatedSession, Depends(require_session)]
 PendingMfaSession = Annotated[
     AuthenticatedSession, Depends(require_pending_or_current_session)
 ]
+
+
+def org_scoped_app_session(current: CurrentSession, db: AppDbSession) -> Session:
+    """The tenant session (``nc3_app``) with the caller's org context asserted.
+
+    Authentication resolves on the `nc3_auth` connection and opens only the
+    *user* arm there; tenant tables live behind the org arm on a different
+    connection, where nothing had been asserting `app.current_org`. Every
+    org-scoped operation takes this instead of :data:`AppDbSession` — reads
+    included, since an unasserted context yields an empty result rather than
+    an error and would surface as a spurious `404`.
+
+    The standing rule this establishes: **every commit on this session must be
+    followed by re-asserting the context**, because ``SET LOCAL`` dies with the
+    transaction and the policies then silently match nothing. Services here do
+    commit mid-request on purpose (`domains/auth/service` sets the precedent,
+    and its routers re-assert afterwards) — the invariant is re-assertion, not
+    abstinence.
+
+    Note the two connections are independent: this one and the `nc3_auth`
+    session commit separately in dependency-teardown order, so no invariant may
+    span them, and each authenticated request holds both for its duration.
+    """
+    rls.set_org_context(db, current.organization_id, current.user_id)
+    return db
+
+
+OrgScopedAppSession = Annotated[Session, Depends(org_scoped_app_session)]
 
 
 def require_authentication(oidc_token: OidcAuth, key: ApiKeyAuth) -> None:
