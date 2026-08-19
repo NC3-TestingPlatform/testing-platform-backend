@@ -152,6 +152,20 @@ def test_registration_without_consent_answers_422(client: TestClient) -> None:
     assert "terms_and_conditions" in response.text
 
 
+@pytest.mark.parametrize("missing_key", ["terms_and_conditions", "privacy_policy"])
+def test_registration_missing_one_acceptance_answers_422(
+    client: TestClient, missing_key: str
+) -> None:
+    """Each seeded statement is individually required; the other cannot stand in."""
+    body = _registration_body(_fresh_email())
+    body["statement_responses"] = [
+        r for r in body["statement_responses"] if r["statement_key"] != missing_key
+    ]
+    response = client.post("/api/v1/auth/register", json=body)
+    assert response.status_code == 422
+    assert missing_key in response.text
+
+
 def test_lockout_after_repeated_failures(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
