@@ -18,6 +18,7 @@ router = APIRouter(tags=["statements"])
 
 _T0 = datetime(2026, 1, 15, tzinfo=UTC)
 _STATEMENT_ID = UUID("019ee1a2-0011-7c22-8d33-4e55f6a77b88")
+_PRIVACY_ID = UUID("019ee1a2-3344-7f55-b066-7b88c9aadbcc")
 _RECEIPT_ID = UUID("019ee1a2-1122-7d33-9e44-5f66a7b88c99")
 
 
@@ -32,15 +33,28 @@ async def list_statements() -> list[Statement]:
     Unauthenticated: a visitor has to be able to read the terms before there is an
     account to attach an acceptance to.
     """
+    # Values mirror the statement rows the migrations seed (a9f2c4e6b8d0 +
+    # d7e3f1a2b4c6): the platform's adapted v3 texts, whose digests are the
+    # SHA-256 of the canonical files under docs/legal/ (content_uri points
+    # there). The DPO's v4 texts arrive as new version rows.
     return [
         Statement(
             id=_STATEMENT_ID,
             statement_key="terms_and_conditions",
-            version="2026-01-15",
+            version="2026-08-18",
             response_kind=StatementResponseKind.ACCEPTANCE,
-            content_hash="sha256:2f8a1c9d4e7b0a3f6c5d8e1b4a7f0c3d6e9b2a5f8c1d4e7b0a3f6c5d8e1b4a7f",
-            content_uri="https://testing.nc3.lu/legal/terms/2026-01-15",
-            effective_at=_T0,
+            content_hash="sha256:5849ebd2b3c3eb22985f1507483fa21e9a364ddd72e72a7a6f00034438fb1515",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/ee0d2e072df274de45aaa076c327c2c91663e7c3/docs/legal/terms-of-service-2026-08-18.md",
+            effective_at=datetime(2026, 8, 18, tzinfo=UTC),
+        ),
+        Statement(
+            id=_PRIVACY_ID,
+            statement_key="privacy_policy",
+            version="2026-08-18",
+            response_kind=StatementResponseKind.ACCEPTANCE,
+            content_hash="sha256:4035948413e80ebea43cae2a53f956ea26939838f3ec0c2064a554cf9c0d28b9",
+            content_uri="https://github.com/NC3-TestingPlatform/testing-platform-backend/blob/ee0d2e072df274de45aaa076c327c2c91663e7c3/docs/legal/privacy-statement-2026-08-18.md",
+            effective_at=datetime(2026, 8, 18, tzinfo=UTC),
         ),
         Statement(
             id=UUID("019ee1a2-2233-7e44-af55-6a77b899cdaa"),
