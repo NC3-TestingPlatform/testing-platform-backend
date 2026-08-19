@@ -12,15 +12,18 @@ written (task #271), owns them. Until it exists this file's guarantees stop at
 "the statement is shaped as intended".
 """
 
+import logging
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy.dialects import postgresql
 from uuid6 import uuid7
 
 from nc3_testing_platform.core import enums
-from nc3_testing_platform.domains.assets import repository
+from nc3_testing_platform.domains.assets import repository, service
 
 ASSET_ID = uuid7()
 ORG_ID = uuid7()
@@ -165,3 +168,177 @@ def test_repository_upsert_challenge_never_reassigns_the_organization() -> None:
     would open a path to rewriting an existing challenge's tenant.
     """
     assert "organization_id" not in _update_set_clause(_upsert_sql())
+
+
+# --- service -----------------------------------------------------------------
+
+
+def _asset(asset_type: enums.AssetType = enums.AssetType.DOMAIN) -> SimpleNamespace:
+    return SimpleNamespace(id=ASSET_ID, value="example.lu", asset_type=asset_type)
+
+
+def _wire(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    asset: object | None,
+    proof: object | None = None,
+    challenge: object | None = None,
+) -> list[dict[str, object]]:
+    """Point the service at fixed repository answers; record upsert calls."""
+    upserts: list[dict[str, object]] = []
+    monkeypatch.setattr(service.repository, "asset_for", lambda db, aid: asset)
+    monkeypatch.setattr(service.repository, "proof_for", lambda db, aid: proof)
+    monkeypatch.setattr(service.repository, "challenge_for", lambda db, aid: challenge)
+    monkeypatch.setattr(
+        service.repository,
+        "upsert_challenge",
+        lambda db, **kw: upserts.append(kw) or SimpleNamespace(**kw),
+    )
+    return upserts
+
+
+def test_service_read_state_refuses_an_invisible_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent and another organization's are one answer, by design."""
+    _wire(monkeypatch, asset=None)
+    with pytest.raises(service.AssetNotFoundError):
+        service.read_state(MagicMock(), ASSET_ID)
+
+
+def test_service_read_state_distinguishes_never_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No proof and no challenge is `404`, not an empty verification object."""
+    _wire(monkeypatch, asset=_asset())
+    with pytest.raises(service.VerificationNotStartedError):
+        service.read_state(MagicMock(), ASSET_ID)
+
+
+def test_service_read_state_returns_a_proof_and_a_challenge_together(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both rows are the state: a verified asset may be re-proving in parallel."""
+    proof, challenge = object(), object()
+    _wire(monkeypatch, asset=_asset(), proof=proof, challenge=challenge)
+    assert service.read_state(MagicMock(), ASSET_ID) == (proof, challenge)
+
+
+def test_service_start_challenge_refuses_a_non_domain_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The asset_type rule is cross-table, so the schema cannot hold it."""
+    _wire(monkeypatch, asset=_asset(asset_type="ip"))  # type: ignore[arg-type]
+    with pytest.raises(service.NotADomainAssetError):
+        service.start_challenge(
+            MagicMock(),
+            asset_id=ASSET_ID,
+            organization_id=ORG_ID,
+            user_id=USER_ID,
+            requested_scope=enums.VerificationScope.ZONE,
+        )
+
+
+def test_service_start_challenge_builds_the_record_name_and_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user is handed a name to publish, so the write must be durable first."""
+    upserts = _wire(monkeypatch, asset=_asset())
+    db = MagicMock()
+    _, challenge = service.start_challenge(
+        db,
+        asset_id=ASSET_ID,
+        organization_id=ORG_ID,
+        user_id=USER_ID,
+        requested_scope=enums.VerificationScope.ZONE,
+    )
+    assert upserts[0]["record_name"] == "_nc3-verify.example.lu"
+    assert upserts[0]["requested_scope"] is enums.VerificationScope.ZONE
+    # A real generated token reached the repository, not a placeholder.
+    assert isinstance(upserts[0]["token"], str) and upserts[0]["token"]
+    assert challenge is not None
+    db.commit.assert_called_once()
+
+
+def test_service_start_challenge_is_allowed_while_a_proof_stands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Widening must not withdraw coverage the user still holds.
+
+    The standing proof comes back alongside the new challenge, which is what
+    lets the response keep reporting `verified` while DNS is being edited.
+    """
+    proof = object()
+    _wire(monkeypatch, asset=_asset(), proof=proof)
+    returned, challenge = service.start_challenge(
+        MagicMock(),
+        asset_id=ASSET_ID,
+        organization_id=ORG_ID,
+        user_id=USER_ID,
+        requested_scope=enums.VerificationScope.ZONE,
+    )
+    assert returned is proof
+    assert challenge is not None
+
+
+def test_service_never_logs_the_token(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The token is the credential the caller is about to publish.
+
+    Asserted rather than left to discipline: one careless `%s` or an
+    `exception()` on this path would put it in shared logs, which the PII rules
+    forbid domains from reaching, let alone credentials.
+    """
+    _wire(monkeypatch, asset=_asset())
+    monkeypatch.setattr(service.verification, "generate_token", lambda: "S3CRET-TOKEN")
+    with caplog.at_level(logging.DEBUG, logger="nc3_testing_platform.domains.assets"):
+        service.start_challenge(
+            MagicMock(),
+            asset_id=ASSET_ID,
+            organization_id=ORG_ID,
+            user_id=USER_ID,
+            requested_scope=enums.VerificationScope.EXACT,
+        )
+    assert "S3CRET-TOKEN" not in caplog.text
+
+
+def test_service_regenerate_refuses_a_verified_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing the token would discard a working proof for nothing."""
+    _wire(monkeypatch, asset=_asset(), proof=object(), challenge=object())
+    with pytest.raises(service.AlreadyVerifiedError):
+        service.regenerate_token(
+            MagicMock(), asset_id=ASSET_ID, organization_id=ORG_ID, user_id=USER_ID
+        )
+
+
+def test_service_regenerate_refuses_when_no_challenge_stands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """There is nothing to replace; the caller wants `POST .../verification`."""
+    _wire(monkeypatch, asset=_asset())
+    with pytest.raises(service.VerificationNotStartedError):
+        service.regenerate_token(
+            MagicMock(), asset_id=ASSET_ID, organization_id=ORG_ID, user_id=USER_ID
+        )
+
+
+def test_service_regenerate_keeps_the_existing_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry must not quietly change coverage.
+
+    Silently widening while replacing a token would be a privilege change
+    disguised as a retry; widening is `start_challenge`, where scope is explicit.
+    """
+    existing = SimpleNamespace(requested_scope=enums.VerificationScope.EXACT)
+    upserts = _wire(monkeypatch, asset=_asset(), challenge=existing)
+    fresh = service.regenerate_token(
+        MagicMock(), asset_id=ASSET_ID, organization_id=ORG_ID, user_id=USER_ID
+    )
+    assert upserts[0]["requested_scope"] is enums.VerificationScope.EXACT
+    # A fresh token, not the stalled one being replaced.
+    assert isinstance(upserts[0]["token"], str) and upserts[0]["token"]
+    assert fresh is not None
