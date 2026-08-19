@@ -66,3 +66,60 @@ class UserSession(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
     last_seen_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
     revoked_at: Mapped[datetime | None]
+    # Current MFA assurance lives here, never as a User boolean (§13.6).
+    mfa_verified_at: Mapped[datetime | None]
+
+
+class UserMfa(Base):
+    """TOTP factor state, one row per user (B4 / US #80).
+
+    `totp_secret_ciphertext` is AES-256-GCM (`nonce || ct`, `core/crypto.py`)
+    over the raw RFC 6238 seed, under the user-scope KEK — user erasure
+    crypto-shreds it like the password hash. Disable is a soft-revoke that
+    nulls the seed and `confirmed_at`: `nc3_auth` holds no DELETE here.
+    `failed_count`/`lockout_count`/`locked_until` implement the MFA-specific
+    escalating lockout; `last_used_step` refuses TOTP replay inside the
+    acceptance window.
+    """
+
+    __tablename__ = "user_mfa"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("app_user.id", ondelete="CASCADE"), unique=True
+    )
+    totp_secret_ciphertext: Mapped[bytes | None]
+    confirmed_at: Mapped[datetime | None]
+    last_used_step: Mapped[int | None] = mapped_column(sa.BigInteger())
+    failed_count: Mapped[int] = mapped_column(server_default=sa.text("0"))
+    lockout_count: Mapped[int] = mapped_column(server_default=sa.text("0"))
+    locked_until: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=sa.func.now(), onupdate=sa.func.now()
+    )
+
+
+class MfaRecoveryCode(Base):
+    """One single-use recovery code, stored as its SHA-256 (B4 / US #80).
+
+    A hash, not a KDF: the codes are 80-bit random index keys like session
+    tokens, not passwords — 2^80 preimage work is unaffected by hash speed.
+    `used_at` burns a spent code, `superseded_at` burns a regenerated set;
+    rows are never deleted in-band (no DELETE grant) — hard deletion belongs
+    to the erasure story. The unique constraint is per user, not global: a
+    global index would refuse one user's INSERT against another tenant's row,
+    a cross-tenant existence oracle under FORCE RLS.
+    """
+
+    __tablename__ = "mfa_recovery_code"
+    __table_args__ = (sa.UniqueConstraint("user_id", "code_hash"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("app_user.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[bytes]
+    used_at: Mapped[datetime | None]
+    superseded_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = mapped_column(server_default=sa.func.now())

@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "app_user",
     "user_credential",
     "user_session",
+    "user_mfa",
+    "mfa_recovery_code",
     "key_envelope",
     "organization_invitation",
     "asset",

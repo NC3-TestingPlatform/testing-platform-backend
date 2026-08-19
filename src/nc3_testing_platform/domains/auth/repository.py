@@ -14,7 +14,12 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from nc3_testing_platform.core import enums
-from nc3_testing_platform.domains.auth.models import UserCredential, UserSession
+from nc3_testing_platform.domains.auth.models import (
+    MfaRecoveryCode,
+    UserCredential,
+    UserMfa,
+    UserSession,
+)
 from nc3_testing_platform.domains.org.models import AppUser, KeyEnvelope
 from nc3_testing_platform.domains.statements.models import Statement
 
@@ -94,4 +99,83 @@ def revoke_other_sessions(
             UserSession.revoked_at.is_(None),
         )
         .values(revoked_at=sa.func.now())
+    )
+
+
+def mfa_for(db: Session, user_id: uuid.UUID) -> UserMfa | None:
+    """The user's MFA row, confirmed or not, readable under the user arm."""
+    return db.scalars(
+        sa.select(UserMfa).where(UserMfa.user_id == user_id)
+    ).one_or_none()
+
+
+def unused_recovery_code_count(db: Session, user_id: uuid.UUID) -> int:
+    """How many live (unused, unsuperseded) recovery codes remain."""
+    return db.scalar(
+        sa.select(sa.func.count())
+        .select_from(MfaRecoveryCode)
+        .where(
+            MfaRecoveryCode.user_id == user_id,
+            MfaRecoveryCode.used_at.is_(None),
+            MfaRecoveryCode.superseded_at.is_(None),
+        )
+    ) or 0
+
+
+def insert_recovery_codes(
+    db: Session, user_id: uuid.UUID, code_hashes: Sequence[bytes]
+) -> None:
+    """Store a fresh set of recovery-code hashes."""
+    db.add_all(
+        MfaRecoveryCode(user_id=user_id, code_hash=code_hash)
+        for code_hash in code_hashes
+    )
+    db.flush()
+
+
+def burn_recovery_codes(db: Session, user_id: uuid.UUID) -> None:
+    """Supersede every live code — regeneration and disable replace the set.
+
+    An UPDATE, never a DELETE: `nc3_auth` holds no DELETE on the table, and
+    the burn history is exactly what an incident responder wants.
+    """
+    db.execute(
+        sa.update(MfaRecoveryCode)
+        .where(
+            MfaRecoveryCode.user_id == user_id,
+            MfaRecoveryCode.used_at.is_(None),
+            MfaRecoveryCode.superseded_at.is_(None),
+        )
+        .values(superseded_at=sa.func.now())
+    )
+
+
+def consume_recovery_code(
+    db: Session, user_id: uuid.UUID, code_hash: bytes
+) -> bool:
+    """Burn one live code; ``True`` when this call spent it.
+
+    One conditional UPDATE is the whole one-time guarantee: two concurrent
+    requests presenting the same code race on the row lock, and the loser's
+    WHERE no longer matches — never SELECT-then-UPDATE.
+    """
+    result = db.execute(
+        sa.update(MfaRecoveryCode)
+        .where(
+            MfaRecoveryCode.user_id == user_id,
+            MfaRecoveryCode.code_hash == code_hash,
+            MfaRecoveryCode.used_at.is_(None),
+            MfaRecoveryCode.superseded_at.is_(None),
+        )
+        .values(used_at=sa.func.now())
+    )
+    return result.rowcount == 1
+
+
+def stamp_session_assurance(db: Session, session_id: uuid.UUID) -> None:
+    """Refresh the session's MFA assurance stamp (step-up verify)."""
+    db.execute(
+        sa.update(UserSession)
+        .where(UserSession.id == session_id, UserSession.revoked_at.is_(None))
+        .values(mfa_verified_at=sa.func.now())
     )
