@@ -115,5 +115,14 @@ def upsert_challenge(
             set_=fresh,
         )
         .returning(DomainVerificationChallenge)
+        # `populate_existing` is load-bearing, not tidiness. RETURNING hydrates
+        # through the identity map, so when the row is already loaded — which it
+        # is on the regeneration path, where the service reads the challenge
+        # first to carry its scope over — SQLAlchemy hands back the *cached*
+        # instance and discards the returned values. The database would hold the
+        # new token while the response carried the old one, and the caller would
+        # publish a value that can never verify. Found by the live suite; no
+        # amount of compiled-SQL assertion would have shown it.
+        .execution_options(populate_existing=True)
     )
     return db.scalars(statement).one()
