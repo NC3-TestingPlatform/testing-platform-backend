@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nc3_testing_platform.core import enums
@@ -32,6 +33,11 @@ class Asset(Base):
     __tablename__ = "asset"
     __table_args__ = (
         sa.UniqueConstraint("organization_id", "asset_type", "value"),
+        # The target of `domain_verification`'s composite foreign key. It exists
+        # so a proof's denormalised `value` cannot drift from the asset it was
+        # proven for: the database refuses the pair rather than trusting the
+        # application to keep two copies in step.
+        sa.UniqueConstraint("id", "value", name="uq_asset_id_value"),
         # §14: only discovery produces child assets.
         sa.CheckConstraint(
             "parent_asset_id IS NULL OR origin = 'discovered'",
@@ -66,9 +72,33 @@ class DomainVerification(Base):
 
     The asset_type = domain rule is cross-table and stays application-enforced
     (§14 closing note).
+
+    `value` is denormalised from the asset so the claim can be unique **platform
+    wide**: a domain names at most one organization (IDR-016), and that is
+    enforced by `uq_domain_verification_value` rather than by application checks,
+    which could not see the conflicting row in the first place. PostgreSQL exempts
+    unique-index and referential-integrity checks from row security, which is the
+    only reason a global constraint works at all under FORCE RLS — see the
+    migration for the consequence.
     """
 
     __tablename__ = "domain_verification"
+    __table_args__ = (
+        # Global, not per-organization: this *is* the claim adjudication.
+        sa.UniqueConstraint("value", name="uq_domain_verification_value"),
+        # Named explicitly, and it has to be. The convention in `core/db.py`
+        # renders `fk_domain_verification_asset_id_asset` for any foreign key
+        # whose first column is `asset_id` and whose target is `asset` — which is
+        # already taken by the single-column key from the initial schema, and
+        # `pg_constraint` is unique on (conrelid, conname), so the migration would
+        # abort.
+        sa.ForeignKeyConstraint(
+            ["asset_id", "value"],
+            ["asset.id", "asset.value"],
+            name="fk_domain_verification_asset_value",
+            ondelete="RESTRICT",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -80,7 +110,30 @@ class DomainVerification(Base):
     verified_scope: Mapped[enums.VerificationScope] = mapped_column(
         VERIFICATION_SCOPE
     )
+    # The canonical domain the proof covers, denormalised from the asset and
+    # pinned to it by the composite foreign key above.
+    value: Mapped[str]
     verified_at: Mapped[datetime]
+    # Who proved it. Attribution for a dispute, so it survives the user leaving.
+    verified_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("app_user.id", ondelete="SET NULL"), index=True
+    )
+    # How the proof was established, for a dispute later. Written here and read by
+    # nothing in v4.0: the v4.1 intrusive gate is the consumer (IDR-019).
+    #
+    # `dnssec_validated` is true only when the answer carrying the token was
+    # DNSSEC-validated. It is never derived from the AD bit alone, because a
+    # signed zone with no record returns AD over an authenticated *denial*.
+    dnssec_validated: Mapped[bool] = mapped_column(server_default=sa.false())
+    # Which resolvers answered, and how many of them carried the token. A dispute
+    # needs to show how the proof was established, not just that it was.
+    resolvers: Mapped[list[str]] = mapped_column(
+        postgresql.ARRAY(sa.Text), server_default=sa.text("'{}'::text[]")
+    )
+    corroborating_answers: Mapped[int] = mapped_column(server_default=sa.text("0"))
+    # Stamped by a later re-check. Nothing writes it in v4.0; it exists so v4.1's
+    # staleness rule for the intrusive gate needs no second migration.
+    last_reverified_at: Mapped[datetime | None]
 
 
 class DomainVerificationChallenge(Base):

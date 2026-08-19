@@ -22,9 +22,9 @@ default: a downgrade against a silently-defaulted database drops every table.
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -67,6 +67,49 @@ class _FileIndirectionSource(PydanticBaseSettingsSource):
             if value is not None:
                 values[key] = value
         return values
+
+# `core/api_db.py` builds both engines with `create_engine(url, pool_pre_ping=True)`
+# and no explicit sizing, so SQLAlchemy's defaults apply: `pool_size=5` plus
+# `max_overflow=10`. The DNS bulkhead has to stay under that, because a check
+# that outlived its connection would starve every other operation on the same
+# role. If pool sizing ever becomes configurable, this constant moves with it.
+_APP_POOL_CEILING = 15
+
+
+class DnsResolverConfig(BaseModel):
+    """One configured recursive resolver, carrying the transport it speaks.
+
+    Transport is per entry rather than global because the two operators NC3
+    configures speak different ones: Restena answers DoT on 853 and filters
+    plaintext 53, while CIRCL answers DoH on 443 and refuses 853. A single
+    global transport field could not express the real deployment.
+
+    Both transports authenticate the resolver, so each carries the material that
+    makes that possible: a DoT entry needs the hostname its certificate is
+    checked against, a DoH entry needs its URL. An entry without that would be
+    encryption with the on-path attacker still in place (IDR-019).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    address: str
+    transport: Literal["dot", "doh"] = "dot"
+    port: int = Field(default=853, ge=1, le=65535)
+    tls_hostname: str | None = None
+    doh_url: str | None = None
+
+    @model_validator(mode="after")
+    def _transport_carries_its_authentication(self) -> "DnsResolverConfig":
+        """Refuse an entry that could only be used unauthenticated."""
+        if self.transport == "dot" and not (self.tls_hostname or "").strip():
+            raise ValueError(
+                "a 'dot' resolver entry requires tls_hostname, the name its "
+                "certificate is verified against"
+            )
+        if self.transport == "doh" and not (self.doh_url or "").strip():
+            raise ValueError("a 'doh' resolver entry requires doh_url")
+        return self
+
 
 
 class Settings(BaseSettings):
@@ -117,6 +160,41 @@ class Settings(BaseSettings):
     # the DNS check (B6b / US #263), where the expensive operation is.
     verification_challenge_rate_limit: int = Field(default=10, ge=1)
     verification_challenge_rate_window_seconds: int = Field(default=300, ge=1)
+
+    # DNS resolution for the verification check (B6b / US #263, IDR-019).
+    #
+    # There is deliberately **no built-in default**. A self-hoster who inherited
+    # one would ship every customer domain they verify to a resolver operator in
+    # another jurisdiction without ever choosing to, and the domains are exactly
+    # the data Non-functional says must not leak. An empty list therefore means
+    # "verification is not configured", and the check refuses `503`.
+    #
+    # That refusal is at **use** time, not import time: `settings` is built when
+    # this module is imported, and both the test suite and `make dev` run with no
+    # environment at all, so refusing here would take the whole application down
+    # instead of the one unconfigured operation. NC3 configures three Restena DoT
+    # endpoints (`dnspub`, `dns1`, `dns2`) with quorum 2; see `.env.example`.
+    verification_resolvers: list[DnsResolverConfig] = Field(default_factory=list)
+    # How many configured resolvers must independently carry the token before an
+    # answer without a DNSSEC-validated signature is accepted. 1 disables
+    # corroboration, which is the dev and single-resolver case.
+    verification_resolver_quorum: int = Field(default=1, ge=1)
+    verification_query_timeout_seconds: float = Field(default=5.0, gt=0)
+    verification_dns_total_deadline_seconds: float = Field(default=20.0, gt=0)
+    # The bulkhead. Admission is a non-blocking semaphore rather than a worker
+    # pool: the handler is synchronous, so it already occupies an AnyIO thread,
+    # and a queue would turn saturation into latency instead of a refusal.
+    verification_dns_max_concurrent_queries: int = Field(default=4, ge=1)
+    # Three windows, narrowest last. The global one is the only bound that does
+    # not divide by the number of organizations an attacker registers, and
+    # registration is free; the per-organization one keeps a single tenant from
+    # consuming that whole global budget and denying verification to everyone.
+    verification_global_rate_limit: int = Field(default=600, ge=1)
+    verification_global_rate_window_seconds: int = Field(default=60, ge=1)
+    verification_org_rate_limit: int = Field(default=60, ge=1)
+    verification_org_rate_window_seconds: int = Field(default=60, ge=1)
+    verification_check_rate_limit: int = Field(default=10, ge=1)
+    verification_check_rate_window_seconds: int = Field(default=300, ge=1)
 
     # Service endpoints (worker/app.py, worker/tasks.py; Redis primitives in
     # core/redis_utils.py once task #157 lands). Defaults match the compose
@@ -256,6 +334,37 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTH_MFA_LOCKOUT_CAP_SECONDS must be at least "
                 "AUTH_MFA_LOCKOUT_BASE_SECONDS."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _verification_dns_settings_are_coherent(self) -> "Settings":
+        """Refuse a quorum nothing can satisfy and a bulkhead wider than the pool.
+
+        The quorum check is skipped when no resolver is configured: an empty list
+        is a legal "not configured yet" state, refused at use time rather than at
+        import (see the field comment).
+        """
+        resolvers = self.verification_resolvers
+        if resolvers and self.verification_resolver_quorum > len(resolvers):
+            raise ValueError(
+                "VERIFICATION_RESOLVER_QUORUM must not exceed the number of "
+                f"configured resolvers ({len(resolvers)})."
+            )
+        if self.verification_dns_max_concurrent_queries >= _APP_POOL_CEILING:
+            raise ValueError(
+                "VERIFICATION_DNS_MAX_CONCURRENT_QUERIES must stay below the "
+                f"application connection-pool ceiling ({_APP_POOL_CEILING}); a "
+                "check that outlives its connection starves every other "
+                "operation on the same role."
+            )
+        if (
+            self.verification_dns_total_deadline_seconds
+            < self.verification_query_timeout_seconds
+        ):
+            raise ValueError(
+                "VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS must be at least "
+                "VERIFICATION_QUERY_TIMEOUT_SECONDS."
             )
         return self
 

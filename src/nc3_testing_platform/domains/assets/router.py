@@ -8,7 +8,12 @@ delivery, which is authorized by a token in the path rather than by a caller.
 from fastapi import APIRouter, HTTPException, Response, status
 
 from nc3_testing_platform.core import rls
-from nc3_testing_platform.core.errors import problem_responses
+from nc3_testing_platform.core.errors import (
+    PROBLEM_DOMAIN_CLAIM_LOST,
+    PROBLEM_RESOLVER_UNAVAILABLE,
+    ProblemException,
+    problem_responses,
+)
 from nc3_testing_platform.core.pagination import CursorPage, Page
 from nc3_testing_platform.core.schemas import ResourceId
 from nc3_testing_platform.core.security import (
@@ -21,7 +26,12 @@ from nc3_testing_platform.core.security import (
     rate_limited,
 )
 from nc3_testing_platform.domains.assets import examples, service
-from nc3_testing_platform.domains.assets.dependencies import ChallengeRateLimited
+from nc3_testing_platform.domains.assets.dependencies import (
+    ChallengeRateLimited,
+    CheckRateLimited,
+    GlobalVerificationCapped,
+    OrgVerificationCapped,
+)
 from nc3_testing_platform.domains.assets.schemas import (
     Asset,
     AssetCreate,
@@ -77,6 +87,51 @@ def _already_verified() -> HTTPException:
             "The asset is already verified; replacing its token would discard a "
             "working proof. Start a new challenge to re-prove or widen scope."
         ),
+    )
+
+
+def _challenge_expired() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "The verification token has expired. Replace it, or start a new "
+            "challenge, before checking again."
+        ),
+    )
+
+
+def _claim_lost() -> ProblemException:
+    """Refuse without naming the other organization, and point at the remedy.
+
+    The body says the domain is claimed and stops there: the conflicting row
+    belongs to another tenant, and identifying it would be a cross-tenant
+    disclosure. Releasing a stale claim is a platform-operator procedure in v4.0
+    (IDR-016, `docs/verification-claim-release.md`), so the refusal names it —
+    otherwise a legitimate owner whose domain was claimed first has nowhere to go.
+    """
+    return ProblemException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "This domain is already verified by another organization. A verified "
+            "claim is released by the platform operator; contact support with the "
+            "domain and evidence of control."
+        ),
+        problem_type=PROBLEM_DOMAIN_CLAIM_LOST,
+    )
+
+
+def _resolver_unavailable() -> ProblemException:
+    """The check could not run. Deliberately not a `failure_code` on the challenge.
+
+    Stamping one would tell the user their DNS is wrong when the fault is ours.
+    """
+    return ProblemException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "The verification check could not run because no DNS resolver was "
+            "available. Nothing about your record has been recorded; try again."
+        ),
+        problem_type=PROBLEM_RESOLVER_UNAVAILABLE,
     )
 
 
@@ -275,10 +330,25 @@ def create_verification(
 @router.post(
     "/{asset_id}/verification/checks",
     summary="Check the DNS record now",
-    responses=problem_responses(401, 404, 409),
-    dependencies=[CredentialRequired],
+    responses={
+        200: {"headers": NO_STORE_HEADERS},
+        **problem_responses(401, 403, 404, 409, 503),
+        **rate_limited(),
+    },
+    dependencies=[
+        OrgAdminRequired,
+        MfaAssuranceRequired,
+        GlobalVerificationCapped,
+        OrgVerificationCapped,
+        CheckRateLimited,
+    ],
 )
-async def check_verification(asset_id: ResourceId) -> DomainVerification:
+def check_verification(
+    asset_id: ResourceId,
+    current: CurrentSession,
+    response: Response,
+    db: OrgScopedAppSession,
+) -> DomainVerification:
     """Resolve the challenge record and update the state.
 
     Always sets `last_recheck_at`, so a user who presses this while DNS is still
@@ -287,9 +357,39 @@ async def check_verification(asset_id: ResourceId) -> DomainVerification:
     exceptional one.
 
     A check that ran and found nothing is a result, not a fault: the response is
-    `200` with the state still `pending` and a `failure_code` saying why.
+    `200` with the state still `pending` and a `failure_code` saying why. `503`
+    means the opposite — the check never ran, and nothing was recorded.
+
+    Gated on `organization_admin` and current MFA assurance, because success names
+    the organization and locks the domain platform-wide (IDR-016). Synchronous on
+    purpose: the DNS lookup blocks, so FastAPI runs this on a worker thread, and
+    the bulkhead in `core/dns_utils` is what bounds how many of those a flood can
+    occupy.
     """
-    return examples.sample_verification(checked=True)
+    try:
+        state = service.run_check(
+            db,
+            asset_id=asset_id,
+            organization_id=current.organization_id,
+            user_id=current.user_id,
+        )
+    except service.AssetNotFoundError:
+        raise _asset_not_found() from None
+    except service.NotADomainAssetError:
+        raise _not_a_domain() from None
+    except service.VerificationNotStartedError:
+        raise _verification_not_started() from None
+    except service.ChallengeExpiredError:
+        raise _challenge_expired() from None
+    except service.DomainClaimLostError:
+        # The service committed the stamped refusal; re-assert before the response
+        # path touches the session again.
+        rls.set_org_context(db, current.organization_id, current.user_id)
+        raise _claim_lost() from None
+    except service.ResolverUnavailableError:
+        raise _resolver_unavailable() from None
+    response.headers["Cache-Control"] = "no-store"
+    return _as_response(asset_id, state)
 
 
 @router.post(

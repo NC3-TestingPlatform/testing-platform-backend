@@ -43,6 +43,7 @@ _METHODS = ("get", "post", "put", "patch", "delete")
 # exempt here. Their coverage lives in tests/test_auth_flow.py (unit, mocked
 # session layer) and tests/test_auth_postgres.py (live, `pytest -m postgres`).
 REALIZED_OPERATIONS = {
+    ("post", "/api/v1/assets/{asset_id}/verification/checks"),
     ("post", "/api/v1/auth/register"),
     ("post", "/api/v1/auth/login"),
     ("get", "/api/v1/auth/session"),
@@ -143,7 +144,6 @@ CASES: tuple[Case, ...] = (
     ),
     Case("delete", "/api/v1/assets/{asset_id}"),
     Case("get", "/api/v1/assets/{asset_id}/scans"),
-    Case("post", "/api/v1/assets/{asset_id}/verification/checks"),
     Case("get", "/api/v1/assets/{asset_id}/feeds"),
     Case("post", "/api/v1/assets/{asset_id}/feeds", json_body={"format": "atom"}),
     Case("post", "/api/v1/assets/{asset_id}/feeds/{feed_id}/revoke"),

@@ -25,6 +25,15 @@ services:
       # APP_ENCRYPTION_MASTER_KEY_FILE instead.
       APP_ENCRYPTION_MASTER_KEY: ${APP_ENCRYPTION_MASTER_KEY:-}
       AUTH_PUBLIC_ORIGIN: ${AUTH_PUBLIC_ORIGIN:-}
+      # Domain verification's DNS boundary (B6b). Empty means not configured, and
+      # the check answers 503; see .env.example for the NC3 resolver set. Egress
+      # for this container must allow 853 to the configured resolver addresses
+      # only — not 53, which both configured operators filter anyway.
+      VERIFICATION_RESOLVERS: ${VERIFICATION_RESOLVERS:-}
+      VERIFICATION_RESOLVER_QUORUM: ${VERIFICATION_RESOLVER_QUORUM:-1}
+      VERIFICATION_QUERY_TIMEOUT_SECONDS: ${VERIFICATION_QUERY_TIMEOUT_SECONDS:-5.0}
+      VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS: ${VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS:-20.0}
+      VERIFICATION_DNS_MAX_CONCURRENT_QUERIES: ${VERIFICATION_DNS_MAX_CONCURRENT_QUERIES:-4}
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-rabbitmq}:${RABBITMQ_PASSWORD:-rabbitmq}@rabbitmq:5672//
       REDIS_URL: redis://redis:6379/0
       # Service hostname, not localhost: the API reaches Rauthy over the
