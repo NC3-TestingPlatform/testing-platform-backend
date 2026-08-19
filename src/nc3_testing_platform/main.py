@@ -6,6 +6,7 @@ Domains are mounted under `/api/v1`.
 from fastapi import APIRouter, FastAPI
 
 from nc3_testing_platform.core.csrf import OriginCheckMiddleware
+from nc3_testing_platform.core.docs import register_docs
 from nc3_testing_platform.core.errors import (
     configure_openapi,
     register_exception_handlers,
@@ -43,11 +44,16 @@ app = FastAPI(
     version="4.0.1",
     summary="v4.0 backend MVP for the NC3 Testing Platform.",
     openapi_url="/api/v1/openapi.json",
-    docs_url="/docs",
+    # The documentation pages are registered by hand, branded with the platform
+    # favicon instead of FastAPI's remotely hosted one (core/docs.py). The
+    # built-ins would be matched first, so they are switched off here.
+    docs_url=None,
+    redoc_url=None,
 )
 
 register_exception_handlers(app)
 configure_openapi(app)
+register_docs(app)
 
 # CSRF origin validation (IDR-010): pure ASGI, so the SSE route streams
 # through untouched. Inert until AUTH_PUBLIC_ORIGIN is set.
