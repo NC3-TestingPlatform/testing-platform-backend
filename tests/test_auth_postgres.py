@@ -444,6 +444,8 @@ def test_stale_assurance_demands_a_stepup(client: TestClient) -> None:
 
     # Backdate the stamp with the owner connection (deliberately outside the
     # application policy; the dev/CI owner is a superuser).
+    if not _OWNER_URL:
+        pytest.skip("DATABASE_URL not set")
     engine = sa.create_engine(_OWNER_URL)
     try:
         with engine.begin() as connection:
