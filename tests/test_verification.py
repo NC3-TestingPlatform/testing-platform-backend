@@ -8,10 +8,11 @@ that coverage never breaks anywhere but a label boundary.
 """
 
 import itertools
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nc3_testing_platform.core.enums import VerificationScope
+from nc3_testing_platform.core.enums import VerificationScope, VerificationStatus
 from nc3_testing_platform.domains.assets import verification
 
 EXACT = VerificationScope.EXACT
@@ -221,3 +222,47 @@ def test_covers_refuses_an_unhandled_scope() -> None:
     """
     with pytest.raises(ValueError, match="unhandled verification scope"):
         verification.covers("example.lu", "not-a-scope", "sub.example.lu")  # type: ignore[arg-type]
+
+
+# --- computed status ---------------------------------------------------------
+
+_T0 = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("has_proof", "expires_at", "expected"),
+    [
+        # A proof wins over everything: a verified asset that is re-proving or
+        # widening carries a challenge too and must keep reporting its coverage.
+        (True, None, VerificationStatus.VERIFIED),
+        (True, _T0 - timedelta(days=1), VerificationStatus.VERIFIED),
+        (True, _T0 + timedelta(days=1), VerificationStatus.VERIFIED),
+        # No proof: an unexpired challenge is pending.
+        (False, _T0 + timedelta(seconds=1), VerificationStatus.PENDING),
+        # Lapsed, and the boundary itself, are expired — not pending.
+        (False, _T0, VerificationStatus.EXPIRED),
+        (False, _T0 - timedelta(seconds=1), VerificationStatus.EXPIRED),
+        # Nothing at all reads as expired; "never started" is the caller's 404.
+        (False, None, VerificationStatus.EXPIRED),
+    ],
+)
+def test_compute_status(
+    has_proof: bool, expires_at: datetime | None, expected: VerificationStatus
+) -> None:
+    """The state diagram, pinned — including that there is no `suspended`."""
+    assert (
+        verification.compute_status(
+            has_proof=has_proof, token_expires_at=expires_at, now=_T0
+        )
+        is expected
+    )
+
+
+def test_no_suspended_status_exists() -> None:
+    """UI-06-01 and the NFR entity table still promise a fourth state.
+
+    The delivered enum has three, all computed. Pinned here so nobody
+    reintroduces a stored `suspended` to satisfy a stale spec page — B6b
+    carries the corrections to those pages.
+    """
+    assert {s.value for s in VerificationStatus} == {"pending", "verified", "expired"}

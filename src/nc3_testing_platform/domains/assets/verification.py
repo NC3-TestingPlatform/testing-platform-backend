@@ -16,8 +16,9 @@ on strings.
 import hmac
 import secrets
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 
-from nc3_testing_platform.core.enums import VerificationScope
+from nc3_testing_platform.core.enums import VerificationScope, VerificationStatus
 
 # 32 bytes of entropy, URL-safe. The token is published in public DNS, so the
 # requirement is unpredictability and exact matching, not secrecy: it is stored
@@ -112,3 +113,26 @@ def token_matches(token: str, rrset: Iterable[Sequence[bytes]]) -> bool:
     return any(
         hmac.compare_digest(b"".join(strings), expected) for strings in rrset
     )
+
+
+def compute_status(
+    *, has_proof: bool, token_expires_at: datetime | None, now: datetime
+) -> VerificationStatus:
+    """The API status, derived from the two stored rows.
+
+    There is no status column (§4.2-4.3): a proof row means verified, an
+    unexpired challenge means pending, anything else is expired. Deriving it
+    rather than storing it is what keeps the two rows from disagreeing with a
+    third field about the same fact.
+
+    A proof wins over a challenge, because a verified asset that is re-proving
+    or widening carries both and must keep reporting the coverage it holds.
+
+    `now` is the caller's — the database clock, so the comparison matches the
+    stamp `token_expires_at` was written from rather than the API host's clock.
+    """
+    if has_proof:
+        return VerificationStatus.VERIFIED
+    if token_expires_at is not None and token_expires_at > now:
+        return VerificationStatus.PENDING
+    return VerificationStatus.EXPIRED

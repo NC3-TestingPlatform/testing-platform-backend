@@ -14,6 +14,7 @@ because ``SET LOCAL`` does not survive that commit.
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 
 import sqlalchemy as sa
@@ -31,6 +32,20 @@ from nc3_testing_platform.domains.assets.models import (
 )
 
 logger = logging.getLogger("nc3_testing_platform.domains.assets")
+
+
+@dataclass(frozen=True)
+class VerificationState:
+    """The asset's verification state: both rows plus the status they imply.
+
+    Assembled here rather than in the router because the status is derived
+    against the *database* clock, which only this layer holds. The router maps
+    it to the response schema and adds nothing.
+    """
+
+    status: enums.VerificationStatus
+    proof: DomainVerification | None
+    challenge: DomainVerificationChallenge | None
 
 
 class AssetNotFoundError(Exception):
@@ -64,9 +79,32 @@ def _db_now(db: Session) -> datetime:
     return db.execute(sa.select(sa.func.now())).scalar_one()
 
 
-def read_state(
-    db: Session, asset_id: uuid.UUID
-) -> tuple[DomainVerification | None, DomainVerificationChallenge | None]:
+def _state(
+    now: datetime,
+    proof: DomainVerification | None,
+    challenge: DomainVerificationChallenge | None,
+) -> VerificationState:
+    """Assemble the state against an already-read clock.
+
+    `now` is passed rather than read here so a caller that is about to commit
+    can take the clock *before* doing so. Reading it afterwards would issue a
+    query between the commit and the router's context re-assertion — harmless
+    for `select now()`, which touches no policy-protected table, but it would
+    put a statement in the one window where a tenant read silently matches
+    nothing, and the next person to add a lookup here would inherit that bug.
+    """
+    return VerificationState(
+        status=verification.compute_status(
+            has_proof=proof is not None,
+            token_expires_at=challenge.token_expires_at if challenge else None,
+            now=now,
+        ),
+        proof=proof,
+        challenge=challenge,
+    )
+
+
+def read_state(db: Session, asset_id: uuid.UUID) -> VerificationState:
     """The asset's proof and challenge, either of which may be absent.
 
     Both rows together are the state: the API status is computed from them and
@@ -83,7 +121,7 @@ def read_state(
     challenge = repository.challenge_for(db, asset_id)
     if proof is None and challenge is None:
         raise VerificationNotStartedError
-    return proof, challenge
+    return _state(_db_now(db), proof, challenge)
 
 
 def start_challenge(
@@ -93,7 +131,7 @@ def start_challenge(
     organization_id: uuid.UUID,
     user_id: uuid.UUID | None,
     requested_scope: enums.VerificationScope,
-) -> tuple[DomainVerification | None, DomainVerificationChallenge]:
+) -> VerificationState:
     """Issue a challenge at the requested coverage, replacing any in progress.
 
     Permitted on an already-verified asset, and the standing proof is returned
@@ -128,7 +166,7 @@ def start_challenge(
         user_id,
     )
     db.commit()
-    return proof, challenge
+    return _state(_db_now(db), proof, challenge)
 
 
 def regenerate_token(
@@ -137,7 +175,7 @@ def regenerate_token(
     asset_id: uuid.UUID,
     organization_id: uuid.UUID,
     user_id: uuid.UUID | None,
-) -> DomainVerificationChallenge:
+) -> VerificationState:
     """Replace a stalled challenge's token and expiry, keeping its scope.
 
     The scope is carried over rather than re-taken: this operation exists for a
@@ -173,5 +211,6 @@ def regenerate_token(
     logger.info(
         "verification token regenerated for asset %s by user %s", asset_id, user_id
     )
+    now = _db_now(db)
     db.commit()
-    return challenge
+    return _state(now, None, challenge)

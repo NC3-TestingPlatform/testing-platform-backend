@@ -2186,14 +2186,11 @@
           "assets"
         ],
         "summary": "Get verification state",
-        "description": "Current ownership-verification state. `404` when none was ever started.",
+        "description": "Current ownership-verification state. `404` when none was ever started.\n\nTakes the org-scoped session even though it only reads: without the context\nthe policy matches nothing and the read would answer `404` for rows that do\nexist, which is indistinguishable from the genuine not-started case.",
         "operationId": "get_verification_api_v1_assets__asset_id__verification_get",
         "security": [
           {
-            "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
+            "SessionCookie": []
           }
         ],
         "parameters": [
@@ -2216,6 +2213,14 @@
                 "schema": {
                   "$ref": "#/components/schemas/DomainVerification"
                 }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
               }
             }
           },
@@ -2256,7 +2261,7 @@
           "assets"
         ],
         "summary": "Start a verification challenge",
-        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the platform session rather\nthan from any stored User flag — proving control of a domain is what\nlater authorizes scanning it.\n\nOn an already-verified asset the response carries both the standing proof and\nthe new challenge, so coverage in force is never withdrawn while ownership is\nre-proven.",
+        "description": "Issue a challenge at the requested coverage.\n\nRequires current MFA assurance, read from the platform session rather than\nfrom any stored User flag — proving control of a domain is what later\nauthorizes scanning it. Also `organization_admin`: a successful\nverification names the organization and locks the domain platform-wide\n(IDR-016), so it is an admin act, while asset creation and non-intrusive\nscanning stay member-level.\n\nOn an already-verified asset the response carries both the standing proof\nand the new challenge, so coverage in force is never withdrawn while\nownership is re-proven. Creating a challenge replaces any challenge the\nasset already had, and is idempotent under concurrency.",
         "operationId": "create_verification_api_v1_assets__asset_id__verification_post",
         "security": [
           {
@@ -2293,6 +2298,14 @@
                 "schema": {
                   "$ref": "#/components/schemas/DomainVerification"
                 }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
               }
             }
           },
@@ -2343,6 +2356,36 @@
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "headers": {
+              "RateLimit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`."
+              },
+              "RateLimit-Policy": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Advertised quota policy, e.g. `100;w=60`."
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the quota resets. Sent with `429`."
               }
             }
           }
@@ -2437,14 +2480,11 @@
           "assets"
         ],
         "summary": "Replace the verification token",
-        "description": "Issue a fresh token and expiry for a stalled challenge.\n\nAnswers `409` when the asset is already verified. Regeneration exists for a\nchallenge that expired or whose token was lost, and a verified asset has\nneither — replacing its token would discard a working proof and make the user\nedit DNS again to get back where they started.\n\nTo re-prove ownership, or to widen the scope, start a new challenge with\n`POST .../verification`. The existing `verified_scope` holds until that\nchallenge succeeds, so nothing depending on the current proof breaks meanwhile.",
+        "description": "Issue a fresh token and expiry for a stalled challenge.\n\nAnswers `409` when the asset is already verified. Regeneration exists for a\nchallenge that expired or whose token was lost, and a verified asset has\nneither — replacing its token would discard a working proof and make the\nuser edit DNS to get back where they started.\n\nThe scope is carried over, not re-taken: changing coverage while replacing a\ntoken would be a privilege change disguised as a retry. To re-prove\nownership, or to widen the scope, start a new challenge with\n`POST .../verification`, where the scope is explicit. The existing\n`verified_scope` holds until that challenge succeeds, so nothing depending\non the current proof breaks meanwhile.",
         "operationId": "regenerate_verification_token_api_v1_assets__asset_id__verification_token_post",
         "security": [
           {
-            "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
+            "SessionCookie": []
           }
         ],
         "parameters": [
@@ -2467,6 +2507,14 @@
                 "schema": {
                   "$ref": "#/components/schemas/DomainVerification"
                 }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
               }
             }
           },
@@ -2507,6 +2555,36 @@
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "headers": {
+              "RateLimit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`."
+              },
+              "RateLimit-Policy": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Advertised quota policy, e.g. `100;w=60`."
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the quota resets. Sent with `429`."
               }
             }
           },

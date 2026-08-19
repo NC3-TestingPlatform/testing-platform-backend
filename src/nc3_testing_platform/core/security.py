@@ -24,6 +24,7 @@ contract: the BFF calls this API as an ordinary client.
 """
 
 import hashlib
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -35,7 +36,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyCookie, APIKeyHeader, OpenIdConnect
 from sqlalchemy.orm import Session
 
-from nc3_testing_platform.core import rls
+from nc3_testing_platform.core import redis_utils, rls
 from nc3_testing_platform.core.api_db import AppDbSession, AuthDbSession
 from nc3_testing_platform.core.enums import OrganizationRole
 from nc3_testing_platform.core.errors import (
@@ -50,6 +51,8 @@ from nc3_testing_platform.core.errors import (
 from nc3_testing_platform.core.settings import settings
 
 # Re-exported name; the environment read lives on the settings module.
+logger = logging.getLogger("nc3_testing_platform.core.security")
+
 OIDC_DISCOVERY_URL = settings.oidc_discovery_url
 
 oidc = OpenIdConnect(
@@ -515,6 +518,49 @@ RATE_LIMIT_HEADERS: dict[str, dict] = {
         "description": "Seconds until the quota resets. Sent with `429`.",
     },
 }
+
+
+async def enforce_rate_limit(key: str, *, limit: int, window_seconds: int) -> None:
+    """Consume one unit of a fixed window, or refuse with `429` + the headers.
+
+    The enforcement half of :func:`rate_limited`, which only declares the
+    contract. Lives in core because more than one domain needs it and two
+    divergent implementations of a **fail-open** control is the kind of drift
+    nobody notices until the day it matters.
+
+    Deliberately fail-open: an unreachable Redis lets the request through with a
+    logged warning. Availability of the underlying operation beats one
+    rate-limit layer, and the durable per-account controls stand on their own.
+    That is also why this must never be the only bound on an expensive
+    operation — it disappears exactly when the platform is already degraded.
+
+    `domains/auth/dependencies.py` predates this and still carries its own
+    copy; converge it when that module is next touched, rather than changing a
+    live auth path from an unrelated story.
+    """
+    try:
+        decision = await redis_utils.consume(
+            key, limit=limit, window_seconds=window_seconds
+        )
+    except Exception:
+        logger.warning(
+            "rate-limit backend unavailable; failing open for %s", key, exc_info=True
+        )
+        return
+    if decision.allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many requests; retry after the window resets.",
+        headers={
+            "RateLimit": (
+                f"limit={decision.limit}, remaining={decision.remaining}, "
+                f"reset={decision.reset_seconds}"
+            ),
+            "RateLimit-Policy": f"{decision.limit};w={window_seconds}",
+            "Retry-After": str(decision.reset_seconds),
+        },
+    )
 
 
 def rate_limited() -> dict[int | str, dict]:
