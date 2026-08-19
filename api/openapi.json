@@ -2398,14 +2398,11 @@
           "assets"
         ],
         "summary": "Check the DNS record now",
-        "description": "Resolve the challenge record and update the state.\n\nAlways sets `last_recheck_at`, so a user who presses this while DNS is still\npropagating can see that it ran. Propagation takes anywhere from minutes to\ntwo days, which makes \"not found yet\" the common outcome rather than an\nexceptional one.\n\nA check that ran and found nothing is a result, not a fault: the response is\n`200` with the state still `pending` and a `failure_code` saying why.",
+        "description": "Resolve the challenge record and update the state.\n\nAlways sets `last_recheck_at`, so a user who presses this while DNS is still\npropagating can see that it ran. Propagation takes anywhere from minutes to\ntwo days, which makes \"not found yet\" the common outcome rather than an\nexceptional one.\n\nA check that ran and found nothing is a result, not a fault: the response is\n`200` with the state still `pending` and a `failure_code` saying why. `503`\nmeans the opposite — the check never ran, and nothing was recorded.\n\nGated on `organization_admin` and current MFA assurance, because success names\nthe organization and locks the domain platform-wide (IDR-016). Synchronous on\npurpose: the DNS lookup blocks, so FastAPI runs this on a worker thread, and\nthe bulkhead in `core/dns_utils` is what bounds how many of those a flood can\noccupy.",
         "operationId": "check_verification_api_v1_assets__asset_id__verification_checks_post",
         "security": [
           {
-            "OpenIdConnect": []
-          },
-          {
-            "ApiKey": []
+            "SessionCookie": []
           }
         ],
         "parameters": [
@@ -2429,10 +2426,28 @@
                   "$ref": "#/components/schemas/DomainVerification"
                 }
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always `no-store`."
+              }
             }
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2458,6 +2473,46 @@
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "headers": {
+              "RateLimit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Quota-window state, e.g. `limit=100, remaining=42, reset=30`."
+              },
+              "RateLimit-Policy": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Advertised quota policy, e.g. `100;w=60`."
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until the quota resets. Sent with `429`."
               }
             }
           },

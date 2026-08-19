@@ -23,6 +23,16 @@ class Organization(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str]
+    # When the name stopped being provisional. Registration provisions a workspace
+    # organization, and the first successful domain verification promotes it to a
+    # named one (IDR-016); this is the stamp that makes that a one-time event.
+    #
+    # **Invariant for any future writer of `name`:** a non-null `named_at` means
+    # the name is settled, so promotion must not overwrite it — and conversely, a
+    # story that renames an organization must stamp this, or promotion will
+    # silently clobber the new name. Every organization created before B6b has it
+    # null.
+    named_at: Mapped[datetime | None]
     settings: Mapped[dict[str, Any]] = mapped_column(
         server_default=sa.text("'{}'::jsonb")
     )

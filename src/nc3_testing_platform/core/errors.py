@@ -36,6 +36,14 @@ PROBLEM_MFA_REQUIRED = problem_type_uri("mfa-required")
 PROBLEM_MFA_ENROLLMENT_REQUIRED = problem_type_uri("mfa-enrollment-required")
 PROBLEM_MFA_STEPUP_REQUIRED = problem_type_uri("mfa-stepup-required")
 PROBLEM_ORG_ROLE_REQUIRED = problem_type_uri("org-role-required")
+# B6b / US #263. `domain-claim-lost` is the only refusal that reports another
+# tenant's state, and it reports the minimum: that the domain is claimed, never by
+# whom. Under FORCE RLS the conflicting row is invisible, and the unique violation
+# is the whole signal — reading the other organization's row to build a friendlier
+# message would need a definer function and would turn the refusal into a
+# cross-tenant disclosure.
+PROBLEM_DOMAIN_CLAIM_LOST = problem_type_uri("domain-claim-lost")
+PROBLEM_RESOLVER_UNAVAILABLE = problem_type_uri("resolver-unavailable")
 
 _PROBLEM_REF = "#/components/schemas/ProblemDetail"
 _VALIDATION_REF = "#/components/schemas/HTTPValidationError"

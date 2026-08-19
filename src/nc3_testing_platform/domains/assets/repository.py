@@ -13,6 +13,7 @@ cannot, which is the point.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import timedelta
 
 import sqlalchemy as sa
@@ -126,3 +127,83 @@ def upsert_challenge(
         .execution_options(populate_existing=True)
     )
     return db.scalars(statement).one()
+
+
+def upsert_proof(
+    db: Session,
+    *,
+    asset_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    value: str,
+    verified_scope: enums.VerificationScope,
+    verified_by_user_id: uuid.UUID | None,
+    dnssec_validated: bool,
+    resolvers: Sequence[str],
+    corroborating_answers: int,
+) -> DomainVerification:
+    """Write the asset's ownership proof, replacing any proof it already holds.
+
+    ``ON CONFLICT DO UPDATE``, never ``DO NOTHING``. Widening coverage is the
+    primary re-verification path and arrives here as a conflict on `asset_id`:
+    with ``DO NOTHING`` that would be a silent no-op answering `200` with the
+    **old** scope, and a second concurrent caller would get no row back at all.
+
+    The statement can raise on the *other* unique constraint,
+    ``uq_domain_verification_value``, which is global rather than
+    per-organization. That is the claim adjudication (IDR-016), and it is the only
+    signal available: the conflicting row belongs to another organization, so
+    under FORCE RLS it is invisible to every read this session could issue. The
+    service discriminates that violation by constraint name and must not try to
+    look the row up — doing so would need a definer function and would turn the
+    refusal into a cross-tenant disclosure.
+
+    :raises sqlalchemy.exc.IntegrityError: On a lost claim, discriminated by
+        constraint name at the call site.
+    """
+    fresh = {
+        "verified_scope": verified_scope,
+        "value": value,
+        "verified_at": sa.func.now(),
+        "verified_by_user_id": verified_by_user_id,
+        "dnssec_validated": dnssec_validated,
+        "resolvers": list(resolvers),
+        "corroborating_answers": corroborating_answers,
+    }
+    statement = (
+        pg_insert(DomainVerification)
+        .values(asset_id=asset_id, organization_id=organization_id, **fresh)
+        .on_conflict_do_update(
+            index_elements=[DomainVerification.asset_id], set_=fresh
+        )
+        .returning(DomainVerification)
+        # Same reasoning as `upsert_challenge`, and the same bug if omitted: the
+        # service reads the proof before running the check, so the row is already
+        # in the identity map and RETURNING would hand back the cached instance,
+        # discarding the scope just written. The database would hold the widened
+        # scope while the response reported the old one.
+        .execution_options(populate_existing=True)
+    )
+    return db.scalars(statement).one()
+
+
+def stamp_check(db: Session, asset_id: uuid.UUID, *, code: str | None) -> int:
+    """Record that a check ran, and why it did not succeed.
+
+    Both columns in one statement, always: the schema's `failure_follows_recheck`
+    check refuses a `failure_code` without a `last_recheck_at`, so writing them
+    apart is a constraint violation waiting for the first failing check. `code`
+    of ``None`` clears a previous failure, which is what a success must do — the
+    field is echoed in the response, so a stale one would report a verified asset
+    alongside yesterday's reason.
+
+    :returns: Rows affected, which the caller **must** check. Under FORCE RLS a
+        lost organization context makes this match nothing and raise nothing, so
+        the rowcount is the only way to tell a refusal that was recorded from one
+        that silently was not.
+    """
+    result = db.execute(
+        sa.update(DomainVerificationChallenge)
+        .where(DomainVerificationChallenge.asset_id == asset_id)
+        .values(last_recheck_at=sa.func.now(), failure_code=code)
+    )
+    return result.rowcount

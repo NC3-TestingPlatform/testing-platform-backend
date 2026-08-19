@@ -1,9 +1,14 @@
-"""Domain-verification lifecycle: issue a challenge, replace a stalled token.
+"""Domain-verification lifecycle: issue a challenge, check it, write the proof.
 
-The challenge half of B6 (US #82). Running the DNS check and writing the proof
-belong to B6b (US #263); this module deliberately never resolves a name, so
-nothing here touches the network and every function is one transaction against
-the organization context the request already asserted.
+The challenge half is B6a (US #82); `run_check` and the claim adjudication are
+B6b (US #263).
+
+`run_check` is the one function here that is not a single transaction, and
+deliberately so: it ends its read transaction **before** resolving, so the pooled
+connection is not held across a network wait. The engine is built on SQLAlchemy's
+defaults (5 plus 10 overflow, so 15 per process), and a check that pinned a
+connection for the DNS budget would let a handful of accounts starve every other
+operation on the `nc3_app` role — one tenant's action, everyone's outage.
 
 Commit doctrine follows `domains/auth/service`: a path that hands the client
 state it must act on — a token to publish — commits explicitly before
@@ -18,18 +23,22 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from nc3_testing_platform.core import enums
+from nc3_testing_platform.core import dns_utils, enums, rls
 from nc3_testing_platform.core.config import (
     VERIFICATION_TOKEN_TTL,
     verification_record_name,
 )
+from nc3_testing_platform.core.settings import settings
 from nc3_testing_platform.domains.assets import repository, verification
 from nc3_testing_platform.domains.assets.models import (
     DomainVerification,
     DomainVerificationChallenge,
 )
+from nc3_testing_platform.domains.assets.verification import VerificationFailureCode
+from nc3_testing_platform.domains.org import service as org_service
 
 logger = logging.getLogger("nc3_testing_platform.domains.assets")
 
@@ -72,6 +81,37 @@ class VerificationNotStartedError(Exception):
 
 class AlreadyVerifiedError(Exception):
     """The asset already holds a proof, so there is no stalled token to replace."""
+
+
+class ChallengeExpiredError(Exception):
+    """The token lapsed before it was proved, so this challenge answers no checks.
+
+    Enforced rather than cosmetic: without it the seven-day lifetime means nothing
+    and a TXT record left behind on a domain that has since changed hands would
+    still win a terminal, platform-wide claim years later. The remedy is a new
+    token, not a retry, which is why it refuses instead of reporting a failed
+    check (api-design §5.1, data-model §4.3).
+    """
+
+
+class DomainClaimLostError(Exception):
+    """Another organization already holds the verified claim on this domain.
+
+    Detected only as a unique-constraint violation, and that is deliberate. The
+    conflicting row belongs to another tenant, so under FORCE RLS it is invisible
+    to every read this session can issue; looking it up would need a SECURITY
+    DEFINER function and would turn the refusal into a cross-tenant disclosure.
+    The caller learns that the domain is claimed, never by whom.
+    """
+
+
+class ResolverUnavailableError(Exception):
+    """The check could not run: nothing is configured, or capacity is exhausted.
+
+    Distinct from a check that ran and failed. Nothing is recorded, because
+    recording a `failure_code` would tell the user their DNS is wrong when the
+    fault is entirely ours.
+    """
 
 
 def _db_now(db: Session) -> datetime:
@@ -214,3 +254,162 @@ def regenerate_token(
     now = _db_now(db)
     db.commit()
     return _state(now, None, challenge)
+
+
+def _stamp(db: Session, asset_id: uuid.UUID, code: VerificationFailureCode | None) -> None:
+    """Record that a check ran, and refuse to continue if the write vanished.
+
+    Under FORCE RLS a lost organization context makes the update match nothing and
+    raise nothing, which is indistinguishable from success. The rowcount is the
+    only detector, so it is checked rather than trusted.
+    """
+    if repository.stamp_check(db, asset_id, code=code.value if code else None) != 1:
+        raise RuntimeError(
+            "verification check stamp matched no row; the organization context "
+            "was lost before the write"
+        )
+
+
+def _claim_conflict(exc: IntegrityError) -> bool:
+    """Whether this violation is the global claim index and not some other bug.
+
+    Discriminated by constraint name on purpose. The proof row carries two unique
+    constraints, a composite foreign key and a check, so a blanket `IntegrityError`
+    handler would tell a user "another organization owns your domain" when the
+    real fault was a denormalisation or referential bug of ours.
+    """
+    diagnostic = getattr(getattr(exc, "orig", None), "diag", None)
+    return getattr(diagnostic, "constraint_name", None) == "uq_domain_verification_value"
+
+
+def run_check(
+    db: Session,
+    *,
+    asset_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+) -> VerificationState:
+    """Resolve the challenge record and, if it proves control, write the proof.
+
+    Three outcomes, and the caller maps each to a status code: the proof was
+    written; the check ran and did not succeed, so a `failure_code` is stamped and
+    the challenge stands; or the domain is already claimed by another organization,
+    which is a refusal.
+
+    The org-admin gate on this operation is **insider governance, not resistance to
+    an anonymous attacker**: registration provisions the registrant as
+    `organization_admin` of their own workspace organization, so an attacker is an
+    admin of a throwaway org from the first second. It constrains a non-admin
+    member of a real multi-person organization and nothing else. What actually
+    stands between an attacker and a claim is the DNS proof itself, the global
+    uniqueness constraint, and the rate limits — do not cite this gate as evidence
+    that this surface resists abuse.
+
+    :raises AssetNotFoundError: When the asset is not visible.
+    :raises NotADomainAssetError: When the asset is not a domain.
+    :raises VerificationNotStartedError: When no challenge is in progress.
+    :raises ChallengeExpiredError: When the token lapsed.
+    :raises DomainClaimLostError: When another organization holds the claim.
+    :raises ResolverUnavailableError: When the check could not run at all.
+    """
+    asset = repository.asset_for(db, asset_id)
+    if asset is None:
+        raise AssetNotFoundError
+    if asset.asset_type is not enums.AssetType.DOMAIN:
+        raise NotADomainAssetError
+    challenge = repository.challenge_for(db, asset_id)
+    if challenge is None:
+        raise VerificationNotStartedError
+    if challenge.token_expires_at <= _db_now(db):
+        raise ChallengeExpiredError
+    record_name, token = challenge.record_name, challenge.verification_token
+    requested_scope = challenge.requested_scope
+
+    # End the transaction before the network call. This is what returns the pooled
+    # connection for the duration of the lookup; it also means the next statement
+    # runs on a *different* connection, which is the real reason `SET LOCAL` has to
+    # be re-asserted afterwards rather than merely because a transaction ended.
+    db.commit()
+    try:
+        outcomes = dns_utils.resolve_txt(record_name)
+    except (dns_utils.DnsNotConfiguredError, dns_utils.DnsCapacityError) as exc:
+        raise ResolverUnavailableError from exc
+
+    rls.set_org_context(db, organization_id, user_id)
+    # Re-read rather than reuse: the token may have been regenerated while the
+    # lookup was in flight, and proving a value that is no longer the challenge's
+    # would grant coverage nobody currently holds the record for.
+    challenge = repository.challenge_for(db, asset_id)
+    if challenge is None:
+        raise VerificationNotStartedError
+    if challenge.verification_token != token:
+        _stamp(db, asset_id, VerificationFailureCode.RECORD_NOT_FOUND)
+        db.commit()
+        rls.set_org_context(db, organization_id, user_id)
+        return _state(_db_now(db), repository.proof_for(db, asset_id), challenge)
+
+    verdict = verification.evaluate(
+        outcomes,
+        token=token,
+        requested_scope=requested_scope,
+        quorum=settings.verification_resolver_quorum,
+    )
+    if not verdict.verified:
+        _stamp(db, asset_id, verdict.failure_code)
+        # B7 audit call site: check ran and did not succeed (asset, code, actor).
+        # Never the token, and never the domain: it is personal data that must not
+        # reach shared logs.
+        logger.info(
+            "verification check for asset %s did not succeed: %s",
+            asset_id,
+            verdict.failure_code.value if verdict.failure_code else "unknown",
+        )
+        now = _db_now(db)
+        db.commit()
+        rls.set_org_context(db, organization_id, user_id)
+        return _state(now, repository.proof_for(db, asset_id), challenge)
+
+    try:
+        # A savepoint, so a lost claim rolls back the proof write without taking
+        # the transaction — and therefore the RLS context set before it — with it.
+        with db.begin_nested():
+            proof = repository.upsert_proof(
+                db,
+                asset_id=asset_id,
+                organization_id=organization_id,
+                value=asset.value,
+                verified_scope=requested_scope,
+                verified_by_user_id=user_id,
+                dnssec_validated=verdict.dnssec_validated,
+                resolvers=verdict.resolvers,
+                corroborating_answers=verdict.corroborating_answers,
+            )
+            org_service.name_organization_if_unnamed(
+                db, organization_id=organization_id, value=asset.value
+            )
+    except IntegrityError as exc:
+        if not _claim_conflict(exc):
+            raise
+        # The savepoint is gone; the transaction and all three GUCs are intact, so
+        # the refusal can be recorded in the same transaction rather than a second
+        # one. Stamping here is the point: a refusal the user cannot see the reason
+        # for is a support ticket.
+        _stamp(db, asset_id, VerificationFailureCode.CLAIM_LOST)
+        db.commit()
+        raise DomainClaimLostError from None
+
+    _stamp(db, asset_id, None)
+    # B7 audit call site: ownership proven (asset, scope, actor, provenance).
+    logger.info(
+        "verification succeeded for asset %s at scope %s by user %s "
+        "(dnssec=%s, corroborated=%d)",
+        asset_id,
+        requested_scope.value,
+        user_id,
+        verdict.dnssec_validated,
+        verdict.corroborating_answers,
+    )
+    now = _db_now(db)
+    db.commit()
+    rls.set_org_context(db, organization_id, user_id)
+    return _state(now, proof, repository.challenge_for(db, asset_id))

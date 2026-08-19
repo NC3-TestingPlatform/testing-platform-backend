@@ -16,9 +16,47 @@ on strings.
 import hmac
 import secrets
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
+from nc3_testing_platform.core.dns_utils import DnsOutcome, ResolverOutcome
 from nc3_testing_platform.core.enums import VerificationScope, VerificationStatus
+
+
+class VerificationFailureCode(StrEnum):
+    """Why the last check did not succeed, as stable namespaced text.
+
+    Deliberately **not** in `core/enums.py`: that module holds the closed
+    enumerations of the contract, each mirroring a PostgreSQL enum type, and its
+    docstring reserves namespaced text (`test_key`, `check_id`, `status_reason`,
+    `notification.type`) for the application layer to own. `failure_code` is that
+    family — the column and the API schema are both `str` because the contract
+    calls it a "stable namespaced reason" — so the vocabulary belongs here, in
+    the pure layer that is already exhaustively tested.
+
+    The namespace prefix carries the one distinction a client needs to act on:
+    `dns.` and `challenge.` and `policy.` are outcomes of a check that ran and
+    that the user can do something about, so they arrive with `200`. `platform.`
+    means the check could not run and nothing was recorded, so it arrives with
+    `503`. `claim.` is the refusal, `409`.
+    """
+
+    # The check ran. The user can act on all of these.
+    RECORD_NOT_FOUND = "dns.record-not-found"
+    NAME_NOT_FOUND = "dns.name-not-found"
+    TOKEN_MISMATCH = "dns.token-mismatch"
+    RESOLVER_TIMEOUT = "dns.resolver-timeout"
+    RESOLVER_FAILURE = "dns.resolver-failure"
+    CORROBORATION_NOT_REACHED = "dns.corroboration-not-reached"
+    CHALLENGE_EXPIRED = "challenge.expired"
+    ZONE_REQUIRES_DNSSEC = "policy.zone-requires-dnssec"
+    # The check could not run. Nothing was recorded.
+    RESOLVER_UNAVAILABLE = "platform.resolver-unavailable"
+    CAPACITY_EXHAUSTED = "platform.capacity-exhausted"
+    # Another organization already holds the claim.
+    CLAIM_LOST = "claim.lost"
+
 
 # 32 bytes of entropy, URL-safe. The token is published in public DNS, so the
 # requirement is unpredictability and exact matching, not secrecy: it is stored
@@ -136,3 +174,111 @@ def compute_status(
     if token_expires_at is not None and token_expires_at > now:
         return VerificationStatus.PENDING
     return VerificationStatus.EXPIRED
+
+
+@dataclass(frozen=True)
+class CheckVerdict:
+    """What a set of resolver answers means, decided without touching a database.
+
+    Pure so the acceptance rules — which decide whether an organization acquires a
+    terminal claim on a domain — can be tested exhaustively.
+    """
+
+    verified: bool
+    failure_code: VerificationFailureCode | None
+    dnssec_validated: bool = False
+    resolvers: tuple[str, ...] = ()
+    corroborating_answers: int = 0
+
+
+# Which failure a caller is told about when no resolver produced an answer. The
+# order is deliberate: a definite answer about the name beats a transport problem,
+# because it is the one the user can act on.
+_NO_ANSWER_CODES: tuple[tuple[DnsOutcome, VerificationFailureCode], ...] = (
+    (DnsOutcome.NO_RECORD, VerificationFailureCode.RECORD_NOT_FOUND),
+    (DnsOutcome.NAME_NOT_FOUND, VerificationFailureCode.NAME_NOT_FOUND),
+    (DnsOutcome.SERVER_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
+    (DnsOutcome.TIMEOUT, VerificationFailureCode.RESOLVER_TIMEOUT),
+    (DnsOutcome.TRANSPORT_FAILURE, VerificationFailureCode.RESOLVER_FAILURE),
+)
+
+
+def evaluate(
+    outcomes: Sequence[ResolverOutcome],
+    *,
+    token: str,
+    requested_scope: VerificationScope,
+    quorum: int,
+) -> CheckVerdict:
+    """Decide whether these answers prove control of the name, and record how.
+
+    Two independent bars, either of which is enough for `exact` coverage:
+
+    * **one DNSSEC-validated answer** carrying the token, which is strictly
+      stronger than corroboration because the signature is checked rather than
+      compared; or
+    * **`quorum` resolvers** independently carrying it, which is what defends the
+      unsigned zones that are most of `.lu`.
+
+    `zone` coverage additionally **requires** validation, and requires it of every
+    answer that carried the token rather than any one of them. Zone is the widest
+    grant in the system — in v4.1 it authorizes intrusive scanning of names that
+    may be delegated to different legal entities — so it demands the strong proof,
+    while `exact` must stay usable by the ~90% of `.lu` domains that are unsigned
+    (9.76% signed, dns.lu, 2026-07-27). See IDR-019.
+
+    Absence is not disagreement: a resolver that has not yet seen a freshly
+    published record lowers the corroboration count and never produces a distinct
+    failure, because it is the ordinary state during propagation.
+    """
+    answered = [o for o in outcomes if o.outcome is DnsOutcome.ANSWERED]
+    if not answered:
+        seen = {o.outcome for o in outcomes}
+        code = next(
+            (code for outcome, code in _NO_ANSWER_CODES if outcome in seen),
+            VerificationFailureCode.RESOLVER_FAILURE,
+        )
+        return CheckVerdict(verified=False, failure_code=code)
+
+    carrying = [o for o in answered if token_matches(token, o.strings)]
+    if not carrying:
+        # The name answered, but not with our token. Either nothing is published
+        # yet or what is published is somebody else's record at the same name,
+        # which is common and not a fault.
+        empty = all(not o.strings for o in answered)
+        return CheckVerdict(
+            verified=False,
+            failure_code=(
+                VerificationFailureCode.RECORD_NOT_FOUND
+                if empty
+                else VerificationFailureCode.TOKEN_MISMATCH
+            ),
+        )
+
+    resolvers = tuple(o.resolver_id for o in carrying)
+    # Every answer that carried the token had to be validated, not merely one of
+    # them: "any" would let a single unvalidated answer satisfy the strong bar.
+    validated = all(o.authenticated for o in carrying)
+    verdict = CheckVerdict(
+        verified=True,
+        failure_code=None,
+        dnssec_validated=validated,
+        resolvers=resolvers,
+        corroborating_answers=len(carrying),
+    )
+
+    if requested_scope is VerificationScope.ZONE and not validated:
+        return CheckVerdict(
+            verified=False,
+            failure_code=VerificationFailureCode.ZONE_REQUIRES_DNSSEC,
+            resolvers=resolvers,
+            corroborating_answers=len(carrying),
+        )
+    if validated or len(carrying) >= quorum:
+        return verdict
+    return CheckVerdict(
+        verified=False,
+        failure_code=VerificationFailureCode.CORROBORATION_NOT_REACHED,
+        resolvers=resolvers,
+        corroborating_answers=len(carrying),
+    )
