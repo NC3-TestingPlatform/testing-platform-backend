@@ -18,6 +18,7 @@ Role URLs derive from `DATABASE_URL` with the dev-default passwords unless
 `APP_DATABASE_URL` says otherwise.
 """
 
+import contextlib
 import os
 import uuid
 from collections.abc import Iterator
@@ -26,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from nc3_testing_platform.core import enums, rls
@@ -35,6 +37,7 @@ from nc3_testing_platform.domains.assets.models import (
     DomainVerification,
     DomainVerificationChallenge,
 )
+from nc3_testing_platform.domains.org import service as org_service
 from nc3_testing_platform.domains.org.models import AppUser, Organization
 
 pytestmark = pytest.mark.postgres
@@ -334,7 +337,7 @@ def test_the_stored_role_labels_match_the_python_enum(
 
 
 def test_regeneration_is_refused_while_a_proof_stands(
-    app_engine: sa.Engine, seed: Seed
+    app_engine: sa.Engine, seed: Seed, owner_engine: sa.Engine
 ) -> None:
     """A working proof must not be discarded to replace a token."""
     with _app_sessionmaker(app_engine)() as db:
@@ -345,6 +348,9 @@ def test_regeneration_is_refused_while_a_proof_stands(
                 organization_id=seed.org_a,
                 asset_id=seed.asset_a,
                 verified_scope=enums.VerificationScope.EXACT,
+                # B6b: denormalised and pinned to the asset by a composite key, so
+                # it must be the asset's own value rather than any placeholder.
+                value=_asset_value(owner_engine, seed.asset_a),
                 verified_at=datetime.now(UTC),
             )
         )
@@ -366,7 +372,7 @@ def test_regeneration_is_refused_while_a_proof_stands(
 
 
 def test_read_state_reports_pending_then_verified(
-    app_engine: sa.Engine, seed: Seed
+    app_engine: sa.Engine, seed: Seed, owner_engine: sa.Engine
 ) -> None:
     """Status is computed from the two rows, against the database clock."""
     with _app_sessionmaker(app_engine)() as db:
@@ -384,6 +390,7 @@ def test_read_state_reports_pending_then_verified(
                     organization_id=seed.org_a,
                     asset_id=seed.asset_a,
                     verified_scope=enums.VerificationScope.ZONE,
+                    value=_asset_value(owner_engine, seed.asset_a),
                     verified_at=datetime.now(UTC),
                 )
             )
@@ -434,3 +441,188 @@ def test_regeneration_returns_the_fresh_token_not_the_replaced_one(
             rls.set_org_context(db, seed.org_a, seed.admin_a)
             db.execute(sa.delete(DomainVerificationChallenge))
             db.commit()
+
+
+# --- the proof, the claim, and the promotion (B6b / US #263) ------------------
+
+
+def _asset_value(owner_engine: sa.Engine, asset_id: uuid.UUID) -> str:
+    """The asset's canonical value, read as the owner so RLS is not in the way."""
+    with sessionmaker(bind=owner_engine)() as unit:
+        return unit.execute(
+            sa.select(Asset.value).where(Asset.id == asset_id)
+        ).scalar_one()
+
+
+def _prove(
+    db: Session,
+    seed: Seed,
+    asset_id: uuid.UUID,
+    value: str,
+    *,
+    organization_id: uuid.UUID | None = None,
+    scope: enums.VerificationScope = enums.VerificationScope.EXACT,
+) -> DomainVerification:
+    return repository.upsert_proof(
+        db,
+        asset_id=asset_id,
+        organization_id=organization_id or seed.org_a,
+        value=value,
+        verified_scope=scope,
+        verified_by_user_id=seed.admin_a,
+        dnssec_validated=True,
+        resolvers=["dnspub.restena.lu"],
+        corroborating_answers=1,
+    )
+
+
+def test_widening_a_proof_returns_the_new_scope_not_the_cached_row(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """The identity-map trap, against the real constraint.
+
+    `RETURNING` hydrates through the identity map, so with the row already loaded
+    SQLAlchemy hands back the cached instance and silently discards what the
+    database returned. This is the shape that shipped once on the challenge path,
+    where the response carried the token it had just replaced. Here it would report
+    `exact` coverage while the database held `zone`.
+    """
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    value = _asset_value(owner_engine, seed.asset_a)
+    _prove(app_session, seed, seed.asset_a, value)
+    app_session.commit()
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+
+    # Load it, so the identity map holds it before the widening write.
+    loaded = repository.proof_for(app_session, seed.asset_a)
+    assert loaded is not None
+    widened = _prove(
+        app_session, seed, seed.asset_a, value, scope=enums.VerificationScope.ZONE
+    )
+    assert widened.verified_scope is enums.VerificationScope.ZONE
+
+
+def test_a_second_organization_cannot_claim_the_same_domain(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """The claim adjudication, which only a real unique index can demonstrate.
+
+    Organization B proves the same domain value. Its row is invisible to A and A's
+    is invisible to B, so nothing in the application can see the conflict — the
+    constraint is the whole mechanism, and it fires because PostgreSQL exempts
+    unique-index checks from row security.
+    """
+    value = _asset_value(owner_engine, seed.asset_a)
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    _prove(app_session, seed, seed.asset_a, value)
+    app_session.commit()
+
+    with _app_sessionmaker(app_session.get_bind())() as other:
+        rls.set_org_context(other, seed.org_b, None)
+        # The proof is invisible from B, which is exactly why B must not be
+        # allowed to decide for itself whether the domain is free.
+        assert repository.proof_for(other, seed.asset_a) is None
+        with pytest.raises(IntegrityError) as raised:
+            _prove(
+                other,
+                seed,
+                seed.asset_b,
+                value,
+                organization_id=seed.org_b,
+            )
+            other.flush()
+        assert (
+            raised.value.orig.diag.constraint_name == "uq_domain_verification_value"
+        ), "the service discriminates on this exact name"
+        other.rollback()
+
+
+def test_a_savepoint_rollback_keeps_the_rls_context(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """The premise the claim-lost path depends on, asserted rather than assumed.
+
+    A `SET LOCAL` issued before the savepoint survives `ROLLBACK TO SAVEPOINT`, so
+    the refusal can be stamped in the same transaction. If this ever stopped being
+    true, the stamp would match zero rows silently and the 409 would carry no
+    reason at all.
+    """
+    value = _asset_value(owner_engine, seed.asset_a)
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    _issue(app_session, seed, seed.asset_a, token="savepoint-tok")
+    app_session.commit()
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+
+    with contextlib.suppress(IntegrityError):
+        with app_session.begin_nested():
+            _prove(app_session, seed, seed.asset_a, value)
+            # Force the conflict inside the savepoint.
+            app_session.execute(
+                sa.text(
+                    "INSERT INTO domain_verification "
+                    "(id, organization_id, asset_id, verified_scope, value, verified_at) "
+                    "VALUES (gen_random_uuid(), :org, :asset, 'exact', :value, now())"
+                ),
+                {"org": seed.org_a, "asset": seed.asset_b, "value": value},
+            )
+
+    # The context must still be in force: the stamp is what proves it.
+    assert repository.stamp_check(app_session, seed.asset_a, code="claim.lost") == 1
+
+
+def test_a_stamp_without_a_context_matches_nothing_and_raises_nothing(
+    app_session: Session, seed: Seed
+) -> None:
+    """Why the rowcount is checked at every call site.
+
+    With no organization context the policy denies by returning no rows rather than
+    by raising, so a write that vanished is indistinguishable from one that
+    succeeded — except by its rowcount.
+    """
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    _issue(app_session, seed, seed.asset_a, token="context-tok")
+    app_session.commit()
+
+    with _app_sessionmaker(app_session.get_bind())() as blind:
+        assert repository.stamp_check(blind, seed.asset_a, code="dns.record-not-found") == 0
+        blind.rollback()
+
+
+def test_the_first_verification_names_the_organization_exactly_once(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """Promotion is idempotent, so a second verification cannot rename the org."""
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    value = _asset_value(owner_engine, seed.asset_a)
+    assert (
+        org_service.name_organization_if_unnamed(
+            app_session, organization_id=seed.org_a, value=value
+        )
+        is True
+    )
+    assert (
+        org_service.name_organization_if_unnamed(
+            app_session, organization_id=seed.org_a, value="later.example.invalid"
+        )
+        is False
+    )
+    app_session.commit()
+    with sessionmaker(bind=owner_engine)() as unit:
+        named = unit.execute(
+            sa.select(Organization.name, Organization.named_at).where(
+                Organization.id == seed.org_a
+            )
+        ).one()
+    assert named.name == value
+    assert named.named_at is not None
+
+
+def test_the_composite_key_refuses_a_proof_whose_value_drifted(
+    app_session: Session, seed: Seed
+) -> None:
+    """The denormalised value cannot disagree with the asset it was proven for."""
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    with pytest.raises(IntegrityError):
+        _prove(app_session, seed, seed.asset_a, "not-this-assets-value.example.invalid")
+        app_session.flush()
+    app_session.rollback()

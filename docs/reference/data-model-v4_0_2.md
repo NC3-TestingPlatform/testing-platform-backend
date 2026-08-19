@@ -108,10 +108,15 @@ Namespaced text values, not database enums: `statement_key`, `required_context_t
 |----------------------|-------------|------------------------|
 | `id`                 | UUID        | Primary key            |
 | `name`               | text        | Not null               |
+| `named_at`           | timestamptz | Nullable               |
 | `settings`           | JSONB       | Not null; default `{}` |
 | `white_label_config` | JSONB       | Not null; default `{}` |
 | `created_at`         | timestamptz | Not null               |
 | `updated_at`         | timestamptz | Not null               |
+
+Registration provisions a workspace organization whose name is provisional, and the first successful domain verification promotes it to a named organization (IDR-016). `named_at` is the stamp that makes that a one-time event, written by a conditional atomic update so two concurrent verifications cannot both rename it.
+
+**Invariant for any future writer of `name`:** a non-null `named_at` means the name is settled, so promotion must not overwrite it — and conversely, a story that renames an organization must stamp `named_at`, or the next verification will silently clobber the new name. Every organization created before B6b has it null.
 
 ### 3.2 `app_user`
 
@@ -303,16 +308,25 @@ Ownership is held in two tables. `domain_verification` records a proof that exis
 |-------------------|----------------------|---------------------------------------------|
 | `id`              | UUID                 | Primary key                                 |
 | `organization_id` | UUID                 | Not null; foreign key to `organization.id`  |
-| `asset_id`        | UUID                 | Not null; unique; foreign key to `asset.id` |
+| `asset_id`        | UUID                 | Not null; unique; foreign key to `asset.id` (single-column key retained; the composite key below is named explicitly to avoid a constraint-name collision) |
 | `verified_scope`  | `verification_scope` | Not null                                    |
+| `value`           | text                 | Not null; **globally unique** (`uq_domain_verification_value`); composite foreign key `(asset_id, value)` → `asset (id, value)` |
 | `verified_at`     | timestamptz          | Not null                                    |
+| `verified_by_user_id` | UUID             | Nullable; foreign key to `app_user.id`, `ON DELETE SET NULL` |
+| `dnssec_validated` | boolean             | Not null, default false                     |
+| `resolvers`       | text[]               | Not null, default `{}`                      |
+| `corroborating_answers` | integer        | Not null, default 0                         |
+| `last_reverified_at` | timestamptz       | Nullable                                    |
 
 Constraints:
 
 - The referenced Asset must have `asset_type = domain`.
 - A row exists exactly while the domain is proven, so proof is presence rather than a stored status.
 - Zone coverage is evaluated by DNS-label ancestry, not by string suffix matching.
-- A successful check writes this row and deletes the challenge that produced it in one transaction, so `verified_scope` changes only at the moment a wider coverage is actually proven.
+- A successful check writes this row and **leaves the challenge in place**, stamping it; `verified_scope` changes only at the moment wider coverage is actually proven. An earlier revision said the challenge is deleted, which contradicts §5.1's rule that a challenge runs beside a standing proof — the two rows are independent precisely so a domain keeps proven coverage while it re-proves.
+- `value` is denormalised from the asset so the claim can be unique **platform wide**: a verified domain names at most one organization (IDR-016). The global unique index *is* the adjudication, and it works under row-level security because PostgreSQL exempts unique-index and referential-integrity checks from row security — the conflicting row is invisible to a tenant read, so the application cannot and must not detect the conflict itself. The composite foreign key pins the denormalised value to its asset so the two copies cannot drift.
+- The provenance columns record **how** a proof was established, for a dispute: whether the answer carrying the token was DNSSEC-validated, which resolvers carried it, and how many corroborated. `dnssec_validated` is never derived from the AD bit alone — a signed zone with no record returns AD over an authenticated *denial* — so it is true only when a token was found in a non-empty, validated answer.
+- `dnssec_validated`, `resolvers`, `corroborating_answers` and `last_reverified_at` are written in v4.0 and read by nothing until the v4.1 intrusive gate consumes them (IDR-019).
 - The API status is computed from the two tables: `verified` while this row exists, `pending` while a challenge is unexpired, and `expired` otherwise. No stored enum carries it.
 - This table stores the current proof only. Verification attempts and status changes are recorded in `audit_event`.
 
@@ -342,8 +356,9 @@ Constraints:
 - A challenge whose `token_expires_at` has passed answers no further checks. Reaching that deadline never touches an existing `domain_verification` row.
 - Replacing the token is rejected while the asset has a `domain_verification` row. Re-proving ownership or widening scope starts a new challenge instead, and the existing proof holds until that challenge succeeds.
 - `last_recheck_at` records the last time the record was looked for, whichever trigger caused it.
-- `failure_code` records the outcome of the most recent check and is cleared when a check succeeds.
-- The row is deleted when its check succeeds, so a spent token is never kept beside the proof it produced.
+- `failure_code` records the outcome of the most recent check and is cleared when a check succeeds. Its vocabulary is namespaced application-owned text, not an enum (`domains/assets/verification.VerificationFailureCode`); the prefix says whether the user or the platform is at fault.
+- `last_recheck_at` and `failure_code` are always written in the same statement, because the check constraint below refuses a code without a recheck stamp.
+- The row **survives** its check succeeding, and the proof takes precedence when both exist (§4.2). An earlier revision said it is deleted; that predates the independent-rows design in §5.1.
 
 ```mermaid
 erDiagram
