@@ -353,6 +353,25 @@ def test_an_unavailable_resolver_records_nothing(wired) -> None:
     assert wired.state["stamped"] == []
 
 
+def test_an_unbuildable_transport_records_nothing(wired) -> None:
+    """A DoH entry this build cannot construct is our misconfiguration, not the user's.
+
+    It escapes the DNS boundary rather than arriving as an outcome, so it only
+    reaches this refusal because it is a `DnsNotConfiguredError`; as an unrelated
+    exception it would have been a `500` with a traceback.
+    """
+    wired.monkeypatch.setattr(
+        service.dns_utils,
+        "resolve_txt",
+        lambda name: (_ for _ in ()).throw(
+            service.dns_utils.DnsTransportUnavailableError()
+        ),
+    )
+    with pytest.raises(service.ResolverUnavailableError):
+        _run(wired)
+    assert wired.state["stamped"] == []
+
+
 def test_a_failed_check_stamps_a_reason_and_keeps_the_challenge(wired) -> None:
     """A check that ran and found nothing is a result, not a fault: 200 + a code."""
     wired.monkeypatch.setattr(
@@ -369,12 +388,23 @@ def test_success_clears_a_previous_failure(wired) -> None:
     wired.monkeypatch.setattr(
         service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
     )
-    wired.monkeypatch.setattr(
-        service.repository, "upsert_proof", lambda db, **kw: SimpleNamespace(**kw)
-    )
+    written: dict[str, object] = {}
+
+    def capture(db: object, **kw: object) -> SimpleNamespace:
+        written.update(kw)
+        return SimpleNamespace(**kw)
+
+    wired.monkeypatch.setattr(service.repository, "upsert_proof", capture)
     _run(wired)
     assert wired.state["stamped"] == [None]
     assert wired.state["named"] is True
+    # The provenance is the dispute record, and nothing reads it before the v4.1
+    # intrusive gate, so a mis-wiring here would stay silent until every stored
+    # proof already carried the wrong evidence. This is the only place it is checked.
+    assert written["dnssec_validated"] is True
+    assert written["resolvers"] == ("a",)
+    assert written["corroborating_answers"] == 1
+    assert written["value"] == wired.asset.value
 
 
 def test_a_regenerated_token_is_not_proved_against_the_stale_value(wired) -> None:

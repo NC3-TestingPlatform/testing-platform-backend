@@ -530,7 +530,6 @@ def test_a_second_organization_cannot_claim_the_same_domain(
                 value,
                 organization_id=seed.org_b,
             )
-            other.flush()
         diagnostic = getattr(raised.value.orig, "diag", None)
         assert (
             getattr(diagnostic, "constraint_name", None)
@@ -626,7 +625,6 @@ def test_the_composite_key_refuses_a_proof_whose_value_drifted(
     rls.set_org_context(app_session, seed.org_a, seed.admin_a)
     with pytest.raises(IntegrityError):
         _prove(app_session, seed, seed.asset_a, "not-this-assets-value.example.invalid")
-        app_session.flush()
     app_session.rollback()
 
 

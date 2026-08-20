@@ -16,6 +16,8 @@ exists (`_dmarc.nc3.lu`), then points a real challenge row at that name with tha
 value as its token. Every code path above the DNS boundary is the production one.
 
 Usage:  DATABASE_URL=postgresql+psycopg://... python scripts/live_verify_b6b.py
+
+Exit codes: 0 every check passed, 1 a check failed, 2 the probe could not run.
 """
 
 import json
@@ -409,7 +411,7 @@ def main() -> int:
         if server.stdout is not None:
             server.terminate()
             try:
-                server.wait(timeout=5)
+                server.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 server.kill()
             print("\n--- server log (tail) ---")
@@ -418,7 +420,7 @@ def main() -> int:
     finally:
         server.terminate()
         try:
-            server.wait(timeout=10)
+            server.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
             server.kill()
 
@@ -430,4 +432,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # A DNS, HTTP, readiness or API-setup failure is the platform failing to run
+    # the probe, not the probe finding a defect, and the two must not share an
+    # exit code: 1 means checks failed, 2 means the run never happened.
+    try:
+        raise SystemExit(main())
+    except (httpx.HTTPError, RuntimeError) as exc:
+        print(f"live verification could not run: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

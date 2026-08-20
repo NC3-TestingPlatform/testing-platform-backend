@@ -10,9 +10,13 @@ platform-wide cap, a per-organization cap, and a per-asset window.
 
 **None of them is the load-bearing bound.** `enforce_rate_limit` is deliberately
 fail-open, so all three vanish the moment Redis does, which is exactly when the
-platform is already degraded. The bound that holds is the non-blocking semaphore
-in `core/dns_utils.py`, which refuses rather than queues. These windows shape
-ordinary use; the semaphore is what survives a bad day.
+platform is already degraded. What holds without Redis lives in
+`core/dns_utils.py` and refuses rather than queues: the non-blocking semaphore
+caps concurrent queries, and a process-local fixed window caps the outbound query
+rate — a concurrency cap alone bounds nothing when resolvers answer fast. That
+window is derived from `verification_global_rate_limit` rather than a knob of its
+own, so the two cannot drift and it sits under this one instead of competing with
+it. These windows shape ordinary use; the DNS boundary is what survives a bad day.
 
 The global cap exists because every per-organization budget divides by the number
 of organizations an attacker registers, and registration is free and instant. The
