@@ -191,11 +191,28 @@ def test_no_resolver_speaking_is_a_platform_fault() -> None:
     assert theirs.failure_code is VerificationFailureCode.RESOLVER_FAILURE
 
 
-def test_an_unhandled_scope_refuses_rather_than_granting_coverage() -> None:
-    """Mirrors `covers`: a scope added later must not land on the permissive arm."""
+@pytest.mark.parametrize(
+    ("outcomes", "why"),
+    [
+        ([_answered("a", ad=True)], "an answer carried the token"),
+        ([_answered("a", ad=True, token="somebody-elses")], "nothing carried it"),
+        ([ResolverOutcome("a", DnsOutcome.NAME_NOT_FOUND)], "nothing answered"),
+        ([], "no resolver was even asked"),
+    ],
+)
+def test_an_unhandled_scope_refuses_rather_than_granting_coverage(
+    outcomes: list[ResolverOutcome], why: str
+) -> None:
+    """Mirrors `covers`: a scope added later must not land on the permissive arm.
+
+    Every path, not just the one that reaches the scope branch. Refusing only
+    once an answer carried the token would make an unhandled scope look like an
+    ordinary DNS failure whenever the record was not published yet — an
+    intermittent bug rather than a refusal on the first call.
+    """
     with pytest.raises(ValueError, match="unhandled verification scope"):
         verification.evaluate(
-            [_answered("a", ad=True)],
+            outcomes,
             token=TOKEN,
             requested_scope="whole-internet",  # type: ignore[arg-type]
             quorum=1,
@@ -302,7 +319,7 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     )
 
 
-def _run(wired) -> object:
+def _run(wired) -> service.VerificationState:
     return service.run_check(
         wired.db,
         asset_id=wired.asset_id,
@@ -433,6 +450,44 @@ def test_a_regenerated_token_is_not_proved_against_the_stale_value(wired) -> Non
     wired.monkeypatch.setattr(service.repository, "upsert_proof", explode)
     _run(wired)
     assert wired.state["stamped"] == [VerificationFailureCode.CHALLENGE_SUPERSEDED.value]
+
+
+def test_a_superseded_check_answers_with_the_token_that_now_stands(wired) -> None:
+    """The refusal must not hand back the value it just declared retired.
+
+    `challenge.superseded` tells the user their published record is for a token
+    that no longer stands; the remedy is to publish the one that does. Echoing
+    the retired token beside that code sends them to publish it again. The
+    service reads the challenge again after the lookup precisely so the response
+    carries the replacement — `repository.challenge_for` refreshes for this.
+    """
+    replacement = SimpleNamespace(
+        record_name=wired.challenge.record_name,
+        verification_token="token-regenerated",
+        requested_scope=EXACT,
+        token_expires_at=wired.challenge.token_expires_at,
+    )
+    reads: list[int] = []
+
+    def challenge_for(db: object, aid: object) -> SimpleNamespace:
+        reads.append(1)
+        # The first read is the one before the network call; every later read is
+        # the post-lookup one the response is built from.
+        return wired.challenge if len(reads) == 1 else replacement
+
+    wired.monkeypatch.setattr(service.repository, "challenge_for", challenge_for)
+    wired.monkeypatch.setattr(
+        service.dns_utils, "resolve_txt", lambda name: [_answered("a", ad=True)]
+    )
+    wired.monkeypatch.setattr(
+        service.repository,
+        "challenge_credentials_for",
+        lambda db, aid: ("token-regenerated", wired.challenge.token_expires_at),
+    )
+    state = _run(wired)
+    assert wired.state["stamped"] == [VerificationFailureCode.CHALLENGE_SUPERSEDED.value]
+    assert state.challenge is replacement
+    assert replacement.verification_token == "token-regenerated"
 
 
 def test_a_token_that_lapses_during_the_lookup_is_refused(wired) -> None:

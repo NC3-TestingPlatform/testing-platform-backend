@@ -231,6 +231,19 @@ def test_a_doh_url_without_a_scheme_refuses_to_start(
         load_settings()
 
 
+def test_a_doh_url_without_a_host_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """`https:` with no authority has the right scheme and nowhere to send the query."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS",
+        '[{"address":"185.194.94.71","transport":"doh","port":443,'
+        '"doh_url":"https:resolver.example/dns-query"}]',
+    )
+    with pytest.raises(RuntimeError, match="host in doh_url"):
+        load_settings()
+
+
 def test_a_deadline_too_short_for_the_quorum_refuses_to_start(
     clean_env: pytest.MonkeyPatch,
 ) -> None:

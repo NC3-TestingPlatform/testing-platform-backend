@@ -191,6 +191,14 @@ class _OutboundBudget:
 _outbound_budget = _OutboundBudget()
 
 
+# The two constructors this module is allowed to use, named here so a test can
+# stand one in without reaching into dnspython's namespace: mocking belongs at
+# this module's own seam, and a test bound to a third-party symbol keeps passing
+# when the code stops calling it. There is deliberately no plaintext entry.
+_DOT_NAMESERVER = dns.nameserver.DoTNameserver
+_DOH_NAMESERVER = dns.nameserver.DoHNameserver
+
+
 def _nameserver(resolver: DnsResolverConfig) -> dns.nameserver.Nameserver:
     """Build the dnspython nameserver for one configured entry.
 
@@ -199,11 +207,11 @@ def _nameserver(resolver: DnsResolverConfig) -> dns.nameserver.Nameserver:
     omission.
     """
     if resolver.transport == "dot":
-        return dns.nameserver.DoTNameserver(
+        return _DOT_NAMESERVER(
             resolver.address, port=resolver.port, hostname=resolver.tls_hostname
         )
     try:
-        return dns.nameserver.DoHNameserver(resolver.doh_url or "")
+        return _DOH_NAMESERVER(resolver.doh_url or "")
     except Exception as exc:  # pragma: no cover - depends on optional extras
         # dnspython needs httpx and h2 for DoH and neither is in the lock, so a
         # DoH entry is a configuration error in this build rather than a runtime

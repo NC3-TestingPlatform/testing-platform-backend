@@ -215,7 +215,7 @@ def test_a_doh_entry_refuses_when_the_transport_is_not_built(
     def unavailable(*args: object, **kwargs: object) -> None:
         raise ImportError("no httpx")
 
-    monkeypatch.setattr(dns.nameserver, "DoHNameserver", unavailable)
+    monkeypatch.setattr(dns_utils, "_DOH_NAMESERVER", unavailable)
     with pytest.raises(dns_utils.DnsTransportUnavailableError):
         dns_utils._nameserver(doh)
 
@@ -240,7 +240,7 @@ def test_an_unbuildable_transport_reaches_the_caller_as_a_configuration_refusal(
     def unavailable(*args: object, **kwargs: object) -> None:
         raise ImportError("no httpx")
 
-    monkeypatch.setattr(dns.nameserver, "DoHNameserver", unavailable)
+    monkeypatch.setattr(dns_utils, "_DOH_NAMESERVER", unavailable)
     with pytest.raises(dns_utils.DnsNotConfiguredError):
         dns_utils.resolve_txt("_nc3-verify.example.lu", resolvers=[doh])
 

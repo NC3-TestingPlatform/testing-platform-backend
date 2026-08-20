@@ -246,7 +246,15 @@ def evaluate(
     Absence is not disagreement: a resolver that has not yet seen a freshly
     published record lowers the corroboration count and never produces a distinct
     failure, because it is the ordinary state during propagation.
+
+    :raises ValueError: When `requested_scope` is a scope this function does not
+        handle. Checked first, before any outcome: a scope added later must fail
+        on every path, not only on the one where a resolver happened to carry the
+        token, or it would be refused as an ordinary DNS failure most of the time
+        and the gap would surface as an intermittent bug.
     """
+    if requested_scope not in (VerificationScope.ZONE, VerificationScope.EXACT):
+        raise ValueError(f"unhandled verification scope: {requested_scope!r}")
     answered = [o for o in outcomes if o.outcome is DnsOutcome.ANSWERED]
     if not answered:
         seen = {o.outcome for o in outcomes}
@@ -293,19 +301,17 @@ def evaluate(
         corroborating_answers=len(carrying),
     )
 
-    if requested_scope is VerificationScope.ZONE:
-        if not validated:
-            return CheckVerdict(
-                verified=False,
-                failure_code=VerificationFailureCode.ZONE_REQUIRES_DNSSEC,
-                resolvers=resolvers,
-                corroborating_answers=len(carrying),
-            )
-    elif requested_scope is not VerificationScope.EXACT:
-        # Exhaustive on purpose, for the same reason `covers` refuses loudly: a
-        # scope added later would otherwise fall through to the *more* permissive
-        # arm and grant coverage nobody decided to grant.
-        raise ValueError(f"unhandled verification scope: {requested_scope!r}")
+    # Exhaustive on purpose, for the same reason `covers` refuses loudly: a scope
+    # added later must not fall through to the *more* permissive arm and grant
+    # coverage nobody decided to grant. The refusal itself is at the top of the
+    # function, so it does not depend on reaching this line.
+    if requested_scope is VerificationScope.ZONE and not validated:
+        return CheckVerdict(
+            verified=False,
+            failure_code=VerificationFailureCode.ZONE_REQUIRES_DNSSEC,
+            resolvers=resolvers,
+            corroborating_answers=len(carrying),
+        )
     if validated or len(carrying) >= quorum:
         return verdict
     return CheckVerdict(

@@ -644,9 +644,10 @@ def test_a_post_commit_re_read_sees_a_concurrently_replaced_token(
     `CHALLENGE_SUPERSEDED` unreachable and quietly broke the guarantee that a
     token regenerated mid-check is never proved against a stale value.
 
-    This asserts both halves, because the trap is the entity read and the fix is
-    the column read: the ORM path still hands back the stale instance, while
-    `challenge_credentials_for` reports the truth.
+    This asserts all three halves: a plain entity select still hands back the
+    stale instance (the trap), `challenge_credentials_for` reports the truth (the
+    fix the comparison uses), and `repository.challenge_for` — which the response
+    is built from — refreshes rather than echoing the retired token.
     """
     rls.set_org_context(app_session, seed.org_a, seed.admin_a)
     _issue(app_session, seed, seed.asset_a, token="token-original")
@@ -669,14 +670,24 @@ def test_a_post_commit_re_read_sees_a_concurrently_replaced_token(
         )
 
     rls.set_org_context(app_session, seed.org_a, seed.admin_a)
-    stale = repository.challenge_for(app_session, seed.asset_a)
-    assert stale is not None
-    assert stale.verification_token == captured, (
-        "the entity read is expected to return the cached instance — this is the "
-        "trap, pinned so nobody 'simplifies' the fix back into it"
-    )
+    # The trap itself, pinned against a plain entity select so nobody
+    # "simplifies" either fix back into it: the query runs, the database returns
+    # the new token, and SQLAlchemy hands back the cached instance anyway.
+    trapped = app_session.scalars(
+        sa.select(DomainVerificationChallenge).where(
+            DomainVerificationChallenge.asset_id == seed.asset_a
+        )
+    ).one()
+    assert trapped.verification_token == captured
 
     fresh = repository.challenge_credentials_for(app_session, seed.asset_a)
     assert fresh is not None
     assert fresh[0] == "token-regenerated"
     assert fresh[0] != captured, "the re-read must detect a superseded token"
+
+    # And the repository's own entity read, which the *response* is built from,
+    # refreshes: answering a superseded check with the retired token would hand
+    # the user the one value that can no longer verify.
+    refreshed = repository.challenge_for(app_session, seed.asset_a)
+    assert refreshed is not None
+    assert refreshed.verification_token == "token-regenerated"

@@ -116,10 +116,20 @@ class DnsResolverConfig(BaseModel):
             # scheme-less URL would put it on the wire in clear for anyone on the
             # path. There is no plaintext branch in `dns_utils._nameserver` either,
             # deliberately; this refuses the configuration that would ask for one.
-            if urlsplit(url).scheme != "https":
+            parts = urlsplit(url)
+            if parts.scheme != "https":
                 raise ValueError(
                     "a 'doh' resolver entry requires an https:// doh_url; "
                     "cleartext would expose the queried domain in transit"
+                )
+            # `https:resolver.example/dns-query` parses with the right scheme and
+            # no authority at all, so the scheme check alone would admit a URL
+            # that has nowhere to send the query. Refusing it at startup beats
+            # discovering it when the first customer runs a check.
+            if not parts.hostname:
+                raise ValueError(
+                    "a 'doh' resolver entry requires a host in doh_url "
+                    "(https://host/path)"
                 )
         return self
 

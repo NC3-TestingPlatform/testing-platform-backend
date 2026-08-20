@@ -33,6 +33,10 @@ import httpx
 import sqlalchemy as sa
 from uuid6 import uuid7
 
+# At module level, unlike the other application imports here, because the entry
+# point below has to name these exceptions in an `except` clause.
+from nc3_testing_platform.core import dns_utils
+
 RESOLVERS = json.dumps(
     [
         {
@@ -109,7 +113,6 @@ class Client:
 
 def read_probe_token() -> str:
     """The exact TXT value published at the probe name, read via the app's boundary."""
-    from nc3_testing_platform.core import dns_utils
     from nc3_testing_platform.core.settings import DnsResolverConfig
 
     resolver = DnsResolverConfig(
@@ -434,9 +437,22 @@ def main() -> int:
 if __name__ == "__main__":
     # A DNS, HTTP, readiness or API-setup failure is the platform failing to run
     # the probe, not the probe finding a defect, and the two must not share an
-    # exit code: 1 means checks failed, 2 means the run never happened.
+    # exit code: 1 means checks failed, 2 means the run never happened. The DNS
+    # boundary's refusals are named explicitly because they descend from
+    # `Exception`, not from `RuntimeError`.
     try:
         raise SystemExit(main())
-    except (httpx.HTTPError, RuntimeError) as exc:
-        print(f"live verification could not run: {exc}", file=sys.stderr)
+    except (
+        httpx.HTTPError,
+        RuntimeError,
+        dns_utils.DnsNotConfiguredError,
+        dns_utils.DnsCapacityError,
+    ) as exc:
+        # The class only. A `RuntimeError` raised here carries `response.text` or
+        # the captured server log, and this output lands in a shared terminal and
+        # in CI: the queried domain is personal data and must not leak there. The
+        # detail is already in the server log the failure path prints.
+        print(
+            f"live verification could not run: {type(exc).__name__}", file=sys.stderr
+        )
         raise SystemExit(2) from exc
