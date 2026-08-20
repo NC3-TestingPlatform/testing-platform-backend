@@ -530,7 +530,6 @@ def test_a_second_organization_cannot_claim_the_same_domain(
                 value,
                 organization_id=seed.org_b,
             )
-            other.flush()
         diagnostic = getattr(raised.value.orig, "diag", None)
         assert (
             getattr(diagnostic, "constraint_name", None)
@@ -626,5 +625,69 @@ def test_the_composite_key_refuses_a_proof_whose_value_drifted(
     rls.set_org_context(app_session, seed.org_a, seed.admin_a)
     with pytest.raises(IntegrityError):
         _prove(app_session, seed, seed.asset_a, "not-this-assets-value.example.invalid")
-        app_session.flush()
     app_session.rollback()
+
+
+def test_a_post_commit_re_read_sees_a_concurrently_replaced_token(
+    app_session: Session, seed: Seed, owner_engine: sa.Engine
+) -> None:
+    """The check's post-lookup re-read must see the database, not the identity map.
+
+    `run_check` captures the token, commits, spends up to the DNS budget on the
+    network, and then re-reads to make sure the token it proved is still the one
+    that stands. That re-read only works if it actually goes to the database.
+
+    It did not. Sessions are built with `expire_on_commit=False` — load-bearing
+    elsewhere — so a commit leaves loaded rows un-expired, and re-selecting the
+    *entity* returns the same Python object with the same stale attributes. The
+    comparison was `x != x` and could never fire, which made
+    `CHALLENGE_SUPERSEDED` unreachable and quietly broke the guarantee that a
+    token regenerated mid-check is never proved against a stale value.
+
+    This asserts all three halves: a plain entity select still hands back the
+    stale instance (the trap), `challenge_credentials_for` reports the truth (the
+    fix the comparison uses), and `repository.challenge_for` — which the response
+    is built from — refreshes rather than echoing the retired token.
+    """
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    _issue(app_session, seed, seed.asset_a, token="token-original")
+    app_session.commit()
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+
+    loaded = repository.challenge_for(app_session, seed.asset_a)
+    assert loaded is not None
+    captured = loaded.verification_token
+    app_session.commit()  # what run_check does before resolving
+
+    # Someone regenerates the token while the lookup is in flight.
+    with owner_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE domain_verification_challenge SET verification_token = "
+                "'token-regenerated' WHERE asset_id = :asset"
+            ),
+            {"asset": seed.asset_a},
+        )
+
+    rls.set_org_context(app_session, seed.org_a, seed.admin_a)
+    # The trap itself, pinned against a plain entity select so nobody
+    # "simplifies" either fix back into it: the query runs, the database returns
+    # the new token, and SQLAlchemy hands back the cached instance anyway.
+    trapped = app_session.scalars(
+        sa.select(DomainVerificationChallenge).where(
+            DomainVerificationChallenge.asset_id == seed.asset_a
+        )
+    ).one()
+    assert trapped.verification_token == captured
+
+    fresh = repository.challenge_credentials_for(app_session, seed.asset_a)
+    assert fresh is not None
+    assert fresh[0] == "token-regenerated"
+    assert fresh[0] != captured, "the re-read must detect a superseded token"
+
+    # And the repository's own entity read, which the *response* is built from,
+    # refreshes: answering a superseded check with the retired token would hand
+    # the user the one value that can no longer verify.
+    refreshed = repository.challenge_for(app_session, seed.asset_a)
+    assert refreshed is not None
+    assert refreshed.verification_token == "token-regenerated"

@@ -150,8 +150,15 @@ def test_worker_limits_follow_settings() -> None:
 # The resolver list is the platform's first structured setting, so these pin
 # both its validation and the one convention it cannot honour.
 
-_DNSPUB = '[{"address":"158.64.1.29","transport":"dot","port":853,'
-_DNSPUB += '"tls_hostname":"dnspub.restena.lu"}]'
+_DNSPUB_ENTRY = (
+    '{"address":"158.64.1.29","transport":"dot","port":853,'
+    '"tls_hostname":"dnspub.restena.lu"}'
+)
+_DNS4EU_ENTRY = (
+    '{"address":"86.54.11.100","transport":"dot","port":853,'
+    '"tls_hostname":"unfiltered.joindns4.eu"}'
+)
+_DNSPUB = f"[{_DNSPUB_ENTRY}]"
 
 
 def test_no_resolver_is_configured_by_default(clean_env: pytest.MonkeyPatch) -> None:
@@ -196,6 +203,73 @@ def test_a_doh_resolver_without_its_url_refuses_to_start(
     )
     with pytest.raises(RuntimeError, match="doh_url"):
         load_settings()
+
+
+def test_a_doh_resolver_over_cleartext_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """`http://` would put the customer's domain on the wire in clear."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS",
+        '[{"address":"185.194.94.71","transport":"doh","port":443,'
+        '"doh_url":"http://resolver.example/dns-query"}]',
+    )
+    with pytest.raises(RuntimeError, match="https"):
+        load_settings()
+
+
+def test_a_doh_url_without_a_scheme_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """A scheme-less URL is not an https URL, however much it looks like one."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS",
+        '[{"address":"185.194.94.71","transport":"doh","port":443,'
+        '"doh_url":"resolver.example/dns-query"}]',
+    )
+    with pytest.raises(RuntimeError, match="https"):
+        load_settings()
+
+
+def test_a_doh_url_without_a_host_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """`https:` with no authority has the right scheme and nowhere to send the query."""
+    clean_env.setenv(
+        "VERIFICATION_RESOLVERS",
+        '[{"address":"185.194.94.71","transport":"doh","port":443,'
+        '"doh_url":"https:resolver.example/dns-query"}]',
+    )
+    with pytest.raises(RuntimeError, match="host in doh_url"):
+        load_settings()
+
+
+def test_a_deadline_too_short_for_the_quorum_refuses_to_start(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """Resolvers are queried sequentially, so a quorum needs quorum-many budgets.
+
+    Otherwise corroboration is unsatisfiable exactly when resolvers are slow,
+    which is when corroboration is the point, and nothing says so until a check
+    fails in production.
+    """
+    clean_env.setenv("VERIFICATION_RESOLVERS", f"[{_DNSPUB_ENTRY},{_DNS4EU_ENTRY}]")
+    clean_env.setenv("VERIFICATION_RESOLVER_QUORUM", "2")
+    clean_env.setenv("VERIFICATION_QUERY_TIMEOUT_SECONDS", "5.0")
+    clean_env.setenv("VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS", "6.0")
+    with pytest.raises(RuntimeError, match="VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS"):
+        load_settings()
+
+
+def test_a_deadline_that_covers_the_quorum_starts(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """The guard bounds the worst case; it must not refuse the shape NC3 runs."""
+    clean_env.setenv("VERIFICATION_RESOLVERS", f"[{_DNSPUB_ENTRY},{_DNS4EU_ENTRY}]")
+    clean_env.setenv("VERIFICATION_RESOLVER_QUORUM", "2")
+    clean_env.setenv("VERIFICATION_QUERY_TIMEOUT_SECONDS", "5.0")
+    clean_env.setenv("VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS", "20.0")
+    assert load_settings().verification_dns_total_deadline_seconds == 20.0
 
 
 def test_a_quorum_no_configuration_can_satisfy_refuses_to_start(

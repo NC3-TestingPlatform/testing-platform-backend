@@ -256,6 +256,16 @@ def regenerate_token(
     return _state(now, None, challenge)
 
 
+# Codes that mean the platform failed, not the user's DNS. They travel as `503`
+# with nothing recorded; every other code is a result the user can act on.
+_PLATFORM_FAULTS = frozenset(
+    {
+        VerificationFailureCode.RESOLVER_UNAVAILABLE,
+        VerificationFailureCode.CAPACITY_EXHAUSTED,
+    }
+)
+
+
 def _stamp(db: Session, asset_id: uuid.UUID, code: VerificationFailureCode | None) -> None:
     """Record that a check ran, and refuse to continue if the write vanished.
 
@@ -336,13 +346,24 @@ def run_check(
         raise ResolverUnavailableError from exc
 
     rls.set_org_context(db, organization_id, user_id)
-    # Re-read rather than reuse: the token may have been regenerated while the
-    # lookup was in flight, and proving a value that is no longer the challenge's
-    # would grant coverage nobody currently holds the record for.
+    # Re-read as **values**, not as an entity. The session keeps loaded rows
+    # un-expired across a commit (`expire_on_commit=False`), so re-selecting the
+    # entity would hand back the very object read before the lookup and compare a
+    # value against itself — the check would silently always pass. Reading columns
+    # goes to the database every time.
+    fresh = repository.challenge_credentials_for(db, asset_id)
+    if fresh is None:
+        raise VerificationNotStartedError
+    current_token, current_expiry = fresh
+    if current_expiry <= _db_now(db):
+        # The token lapsed *during* the lookup. Checking expiry only before the
+        # network call would let a challenge that died mid-flight still win a
+        # terminal claim.
+        raise ChallengeExpiredError
     challenge = repository.challenge_for(db, asset_id)
     if challenge is None:
         raise VerificationNotStartedError
-    if challenge.verification_token != token:
+    if current_token != token:
         # Not "record not found": this check resolved the *old* token, so it says
         # nothing about the one that now stands, and claiming the record is missing
         # would be a false statement about DNS the user may have published
@@ -359,6 +380,11 @@ def run_check(
         quorum=settings.verification_resolver_quorum,
     )
     if not verdict.verified:
+        if verdict.failure_code in _PLATFORM_FAULTS:
+            # The check could not run. Stamping a reason here would tell the user
+            # their DNS is wrong when every resolver was unreachable — which is
+            # exactly what happens while the egress allowlist is unprovisioned.
+            raise ResolverUnavailableError
         _stamp(db, asset_id, verdict.failure_code)
         # B7 audit call site: check ran and did not succeed (asset, code, actor).
         # Never the token, and never the domain: it is personal data that must not

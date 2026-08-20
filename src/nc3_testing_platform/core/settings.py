@@ -23,6 +23,7 @@ default: a downgrade against a silently-defaulted database drops every table.
 import os
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic.fields import FieldInfo
@@ -106,8 +107,30 @@ class DnsResolverConfig(BaseModel):
                 "a 'dot' resolver entry requires tls_hostname, the name its "
                 "certificate is verified against"
             )
-        if self.transport == "doh" and not (self.doh_url or "").strip():
-            raise ValueError("a 'doh' resolver entry requires doh_url")
+        if self.transport == "doh":
+            url = (self.doh_url or "").strip()
+            if not url:
+                raise ValueError("a 'doh' resolver entry requires doh_url")
+            # Same rule as the DoT branch, stated in the other transport's terms:
+            # the queried name is the customer's domain, and `http://` or a
+            # scheme-less URL would put it on the wire in clear for anyone on the
+            # path. There is no plaintext branch in `dns_utils._nameserver` either,
+            # deliberately; this refuses the configuration that would ask for one.
+            parts = urlsplit(url)
+            if parts.scheme != "https":
+                raise ValueError(
+                    "a 'doh' resolver entry requires an https:// doh_url; "
+                    "cleartext would expose the queried domain in transit"
+                )
+            # `https:resolver.example/dns-query` parses with the right scheme and
+            # no authority at all, so the scheme check alone would admit a URL
+            # that has nowhere to send the query. Refusing it at startup beats
+            # discovering it when the first customer runs a check.
+            if not parts.hostname:
+                raise ValueError(
+                    "a 'doh' resolver entry requires a host in doh_url "
+                    "(https://host/path)"
+                )
         return self
 
 
@@ -172,8 +195,10 @@ class Settings(BaseSettings):
     # That refusal is at **use** time, not import time: `settings` is built when
     # this module is imported, and both the test suite and `make dev` run with no
     # environment at all, so refusing here would take the whole application down
-    # instead of the one unconfigured operation. NC3 configures three Restena DoT
-    # endpoints (`dnspub`, `dns1`, `dns2`) with quorum 2; see `.env.example`.
+    # instead of the one unconfigured operation. NC3 configures two operators with
+    # two DoT endpoints each (Restena and DNS4EU unfiltered) and quorum 3, so a
+    # quorum exceeds any single operator's endpoint count and no one operator can
+    # forge a proof alone; see `.env.example`.
     verification_resolvers: list[DnsResolverConfig] = Field(default_factory=list)
     # How many configured resolvers must independently carry the token before an
     # answer without a DNSSEC-validated signature is accepted. 1 disables
@@ -365,6 +390,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS must be at least "
                 "VERIFICATION_QUERY_TIMEOUT_SECONDS."
+            )
+        # `resolve_txt` queries resolvers one after another under the single total
+        # budget and reports the ones it never reached as NOT_ATTEMPTED. A deadline
+        # that cannot fit `quorum` worst-case queries therefore makes corroboration
+        # unsatisfiable exactly when resolvers are slow, which is when corroboration
+        # matters — and the deployment would not find out until a check failed. Same
+        # defect class as a quorum larger than the resolver list, refused above.
+        needed = (
+            self.verification_resolver_quorum * self.verification_query_timeout_seconds
+        )
+        if resolvers and self.verification_dns_total_deadline_seconds < needed:
+            raise ValueError(
+                "VERIFICATION_DNS_TOTAL_DEADLINE_SECONDS must cover "
+                "VERIFICATION_RESOLVER_QUORUM worst-case queries "
+                f"({needed}); resolvers are queried sequentially."
             )
         return self
 

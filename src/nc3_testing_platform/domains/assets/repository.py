@@ -14,7 +14,7 @@ cannot, which is the point.
 
 import uuid
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -45,11 +45,23 @@ def asset_for(db: Session, asset_id: uuid.UUID) -> Asset | None:
 def challenge_for(
     db: Session, asset_id: uuid.UUID
 ) -> DomainVerificationChallenge | None:
-    """The asset's challenge in progress, if one stands."""
+    """The asset's challenge in progress, if one stands.
+
+    ``populate_existing=True`` for the same reason as `upsert_challenge` and
+    `upsert_proof`, and it is not optional here either. The sessions this runs on
+    are built with `expire_on_commit=False`, so a commit leaves loaded rows
+    un-expired: without it this SELECT still goes to the database and then
+    **discards what it returned**, handing back the instance already in the
+    identity map. `run_check` reads a challenge, commits, spends up to the DNS
+    budget on the network and reads it again — and the second read is what the
+    response is built from, so a token regenerated in that window would be
+    answered with the retired one, beside the very code that says it was
+    superseded. Refreshing costs nothing: the query is issued regardless.
+    """
     return db.scalars(
-        sa.select(DomainVerificationChallenge).where(
-            DomainVerificationChallenge.asset_id == asset_id
-        )
+        sa.select(DomainVerificationChallenge)
+        .where(DomainVerificationChallenge.asset_id == asset_id)
+        .execution_options(populate_existing=True)
     ).one_or_none()
 
 
@@ -127,6 +139,36 @@ def upsert_challenge(
         .execution_options(populate_existing=True)
     )
     return db.scalars(statement).one()
+
+
+def challenge_credentials_for(
+    db: Session, asset_id: uuid.UUID
+) -> tuple[str, datetime] | None:
+    """The challenge's token and expiry as **plain values**, not an ORM instance.
+
+    Deliberately a column select. The sessions this runs on are built with
+    `expire_on_commit=False` (`core/api_db`), which is load-bearing elsewhere but
+    means a commit does **not** expire a loaded row: a plain `select()` finds the
+    identity key present and un-expired, discards what the database returned, and
+    hands back the same Python object. Re-reading an entity would therefore be a
+    no-op that silently compares a value against itself.
+
+    That is the same identity-map behaviour `upsert_proof`, `upsert_challenge` and
+    `challenge_for` defuse with `populate_existing=True`; here the caller wants
+    values rather than a managed instance, so a column select is both simpler and
+    impossible to get wrong by omission — the comparison that decides whether a
+    claim is written does not depend on anyone remembering an execution option.
+
+    :returns: ``(verification_token, token_expires_at)``, or ``None`` when no
+        challenge stands.
+    """
+    row = db.execute(
+        sa.select(
+            DomainVerificationChallenge.verification_token,
+            DomainVerificationChallenge.token_expires_at,
+        ).where(DomainVerificationChallenge.asset_id == asset_id)
+    ).one_or_none()
+    return (row.verification_token, row.token_expires_at) if row else None
 
 
 def upsert_proof(
