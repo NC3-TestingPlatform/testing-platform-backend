@@ -485,9 +485,7 @@ async def revoke_asset_feed(asset_id: ResourceId, feed_id: ResourceId) -> AssetF
     A `POST` rather than a `DELETE`, because revocation is a recorded event and the
     lifecycle survives it.
     """
-    feed = examples.sample_feed()
-    feed.revoked_at = feed.created_at
-    return feed
+    return examples.revoked_feed()
 
 
 @public_feed_router.get(

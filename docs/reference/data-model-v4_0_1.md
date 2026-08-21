@@ -531,6 +531,7 @@ Constraints:
 - `grade` is used only for Email, Web headers, and Web TLS tasks.
 - Non-graded tasks use severity counts or per-step verdicts in `summary`.
 - No cross-module composite score is stored.
+- The API-level `ScanResult.trend` (`TrendDirection`: `improving`, `unchanged`, `declining`) is computed at read time from the previous comparable result and is not stored. No PostgreSQL enum carries it, like the computed verification status (§4.2).
 
 ### 8.2 `finding`
 

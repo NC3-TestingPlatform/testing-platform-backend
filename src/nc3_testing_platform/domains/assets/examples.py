@@ -30,6 +30,15 @@ from nc3_testing_platform.domains.scans.examples import (
 _T0 = datetime(2026, 6, 1, 8, 30, tzinfo=UTC)
 _T1 = datetime(2026, 7, 31, 9, 1, 12, tzinfo=UTC)
 
+# The challenge is younger than the proof: its answer window must still be open at
+# the _T1 recheck, or a `pending` sample would carry an unanswerable challenge.
+# VERIFICATION_TOKEN_TTL is env-configurable, so the invariant is asserted rather
+# than assumed — a TTL short enough to close the window fails at import.
+_CHALLENGE_REQUESTED_AT = datetime(2026, 7, 28, 8, 30, tzinfo=UTC)
+assert _CHALLENGE_REQUESTED_AT + VERIFICATION_TOKEN_TTL > _T1
+
+_FEED_REVOKED_AT = datetime(2026, 7, 31, 10, 0, tzinfo=UTC)
+
 _SUBDOMAIN_ASSET_ID = UUID("019ee1a3-0011-7a22-8b33-4c44d5e66f77")
 _CHALLENGE_ID = UUID("019ee1a3-1122-7b33-9c44-5d55e6f77a88")
 _FEED_ID = UUID("019ee1a3-2233-7c44-ad55-6e66f7a88b99")
@@ -80,9 +89,9 @@ def sample_challenge(checked: bool = False) -> VerificationChallenge:
         requested_scope=VerificationScope.ZONE,
         record_name=verification_record_name("example.lu"),
         verification_token="verify-4f7a2c9e1b8d3056",
-        token_expires_at=_T0 + VERIFICATION_TOKEN_TTL,
+        token_expires_at=_CHALLENGE_REQUESTED_AT + VERIFICATION_TOKEN_TTL,
         requested_by_user_id=USER_ID,
-        requested_at=_T0,
+        requested_at=_CHALLENGE_REQUESTED_AT,
         last_recheck_at=_T1 if checked else None,
         failure_code="dns.txt_record_not_found" if checked else None,
     )
@@ -100,6 +109,13 @@ def sample_feed() -> AssetFeed:
         last_used_at=_T1,
         created_at=_T0,
     )
+
+
+def revoked_feed() -> AssetFeed:
+    """The feed after revocation, revoked after its last delivery."""
+    feed = sample_feed()
+    feed.revoked_at = _FEED_REVOKED_AT
+    return feed
 
 
 def sample_feed_created() -> AssetFeedCreated:

@@ -88,6 +88,7 @@ GET /api/v1/scans/{scan_id}/events
 - Job statuses: `queued`, `running`, `completed`, `partial`, `failed`, `canceled`.
 - Task statuses: `queued`, `running`, `completed`, `failed`, `skipped`, `blocked`, `canceled`.
 - A ScanResult belongs to one ScanTask, not directly to the ScanJob.
+- A ScanResult carries an optional `trend`: movement against the previous result for the same test, as a `direction` (`improving`, `unchanged`, `declining`), a signed `delta`, and the id of the compared result. It tracks `grade` where the test is graded and total findings where it is not. Computed at read time; null on the first result for a test, or once the predecessor has been purged.
 - Specific causes use stable machine-readable `status_reason` values. Labels, descriptions, localization, and operator guidance stay code-owned.
 - A task timeout produces `failed` with a timeout `status_reason`. A job timeout terminates unfinished work; the job becomes `partial` when usable results exist, otherwise `failed`.
 - `POST /scans/{scan_id}/cancel` records cancellation intent and preserves scan history. `DELETE` is never used to stop execution.
